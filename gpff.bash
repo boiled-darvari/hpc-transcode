@@ -64,14 +64,13 @@ work_dir="/mnt/data/"
 # so that we will see less bugs in the future
 input_temp_name="$1"
 input_corrected_name=$(echo "$input_temp_name" | sed 's/ /\-/g')
+if [[ "$input_temp_name" != "$input_corrected_name" ]]; then
+    mv "$input_temp_name" $input_corrected_name
+fi
 
-mv "$input_temp_name" $input_corrected_name
 input_file="$input_corrected_name"
 input_extension=".${input_file##*.}"
 input_filename="${input_file%.*}"
-
-# changing the audio transcoded extension for debug purpose only
-audio_extension=".m4a"
 
 # here we choose between static build of ffmpeg and packages.
 ffmpeg_binary="./ffmpeg-git-20240504-amd64-static/ffmpeg"
@@ -101,15 +100,70 @@ function makedir_or_cleanup() {
     echo -e "${cyanbg}makedir_or_cleanup: $?${clear}"
 }
 
-# we extract and transcode the audio of the input file.
-# it's fine if we have multi audio, but let's make it simpler
-# I think, we should not use -async 1 anymore here.
+# here we are going to extract each possible audio tracks from the input file
+# first of all, we get the exact stream index of audio streams using ffprobe
+# then we create a on the fly list of commands based on the index of track[s]
+# at the same time, we insert the considered names to a text file to have a list of them
+# at the end, we run the generated commands with the main ffmpeg command.
+# with that, we open the input file only once with ffmpeg!
+# the -map_chapters -1 is important to ignore the data stream in some files
+# with chapters
+function extract_audios() {
+    echo -e "${cyanbg}extract_audios${clear}"
+    local audio_indexes=$($ffprobe_binary -loglevel error -select_streams a -show_entries stream=index -of csv=p=0 $input_file | sed 's/,//g')
+    local lambda_commands=""
+    for index in $audio_indexes; do
+        local audio_temp_name="audio_stream_$index.m4a"
+        # here we are going to use -map 0:index instead of -map a:index
+        # that's because we are getting the total index number not index in audio streams
+        lambda_commands+=" -map 0:"$index" -copyts -map_chapters -1 -c copy $input_filename/$audio_temp_name "
+        echo "$audio_temp_name" >> $input_filename/audio_list.txt
+    done
+    $ffmpeg_binary -i $input_file $lambda_commands
+    echo -e "${cyanbg}extract_audios: $?${clear}"
+}
+
+# here we are going to transcode the audio tracks in parallel remotely if
+# there are more than one of them. we decide that at the end of this script.
+# about what the parallel command is doing we talk a lot in process_video_transcode_hpc_parallel()
+# other than that, there is nothing new to explain
+function process_audio_transcode_hpc_parallel() {
+    echo -e "${cyanbg}process_audio_transcode_hpc_parallel${clear}"
+    # for multi-node run
+    parallel --bar  -j 2 \
+        -S '..,1/:' --delay 0.1 --sshdelay 0.1 --workdir /mnt/data/ \
+        --transferfile $input_filename/{}\
+        --return $input_filename/transcoded_{} \
+        --cleanup \
+        $ffmpeg_binary -i $input_filename/{} -copyts \
+        -map a -map_chapters -1 -acodec aac -strict experimental -ar 44100 -ac 2 -ab 128k \
+        $input_filename/transcoded_{} \
+        :::: $input_filename/audio_list.txt
+    echo -e "${cyanbg}process_audio_transcode_hpc_parallel: $?${clear}"
+}
+
+# here we transcode the audio files locally if the audio tracks are only one
+# or we are running in localonly mode.
+# (I think, we should stop using -async 1 here.)
 function transcode_audio() {
     echo -e "${cyanbg}transcode_audio${clear}"
-    $ffmpeg_binary -i $input_file -copyts \
+    parallel --bar  -j 2 \
+        $ffmpeg_binary -i $input_filename/{} -copyts \
         -map a -map_chapters -1 -acodec aac -strict experimental -ar 44100 -ac 2 -ab 128k \
-        $input_filename/transcoded_audios$audio_extension
+        $input_filename/transcoded_{} \
+        :::: $input_filename/audio_list.txt
     echo -e "${cyanbg}transcode_audio: $?${clear}"
+}
+
+# after transcoding, we need a list of audio files that are transcoded. because the list
+# can be dynamic but in static structure, we guess the transcodded file name based on
+# the audio list we created in extract_audios(). here we just add transcoded_ to each
+# file name in the list.
+function create_transcoded_list() {
+    echo -e "${cyanbg}create_resolutions_segment_list${clear}"
+    sed 's/\(.*\).m4a/transcoded_\1\.m4a/g' \
+        $input_filename/audio_list.txt > $input_filename/transcoded_audio_list.txt
+    echo -e "${cyanbg}create_resolutions_segment_list: $?${clear}"
 }
 
 # I'm not sure about this flag yet, let's keep it here.
@@ -126,7 +180,7 @@ function divide_mkv() {
     # the duration can be anything, but the smaller it goes, the more overhead we will have.
     # also the bigger it goes, there is a chance that we will have the last file our bottleneck.
     # so it should be not so long, not so short. 200 in seconds means 00:03:20
-    local duration=200
+    local duration=10
     # here we are going to calculate the frame_rate to be used in segment_time_delta as explained here in worse case:
     # https://ffmpeg.org/ffmpeg-all.html "For constant frame rate videos a value of 1/(2*frame_rate) should address
     # the worst case mismatch between the specified time and the time set by force_key_frames."
@@ -156,8 +210,8 @@ function create_filelist() {
 }
 
 # here we will create a directory in the nodes/worker servers similar to makedir_or_cleanup()
-# before starting the main transcode process in process_transcode_hpc_parallel()
-# for more details about the commands, see the comments before process_transcode_hpc_parallel()
+# before starting the main transcode process in process_video_transcode_hpc_parallel()
+# for more details about the commands, see the comments before process_video_transcode_hpc_parallel()
 function remote_mkdir_filename() {
     echo -e "${cyanbg}remote_mkdir_filename${clear}"
     parallel -j1 --onall \
@@ -167,8 +221,8 @@ function remote_mkdir_filename() {
 }
 
 # here we will remove the directory we created in makedir_or_cleanup() after the main transcode
-# process in process_transcode_hpc_parallel()
-# for more details about the commands, see the comments before process_transcode_hpc_parallel()
+# process in process_video_transcode_hpc_parallel()
+# for more details about the commands, see the comments before process_video_transcode_hpc_parallel()
 function remote_rm_filename() {
     echo -e "${cyanbg}remote_rm_filename${clear}"
     parallel -j1 --onall\
@@ -201,11 +255,11 @@ function remote_rm_filename() {
 # in the new tests, I decided to use -fps_mode passthrough not anything else. so we will have a
 # synchronize output at the end. in my several test, the audio timing were just fine, but the
 # only problem was the video. now that even transcoding mp4 has no problem.
-function process_transcode_hpc_parallel() {
-    echo -e "${cyanbg}process_transcode_hpc_parallel${clear}"
+function process_video_transcode_hpc_parallel() {
+    echo -e "${cyanbg}process_video_transcode_hpc_parallel${clear}"
     # for multi-node run
-    parallel --bar  -j 1 \
-        -S '..,:' --delay 0.1 --sshdelay 0.1 --workdir /mnt/data/ \
+    parallel --bar  -j 2 \
+        -S '..,1/:' --delay 0.1 --sshdelay 0.1 --workdir /mnt/data/ \
         --transferfile $input_filename/{}\
         --return $input_filename/transcoded_720p_{} \
         --return $input_filename/transcoded_480p_{} \
@@ -213,13 +267,13 @@ function process_transcode_hpc_parallel() {
         --cleanup \
         $ffmpeg_binary -i $input_filename/{} -copyts -avoid_negative_ts 1 \
         -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
-        -vf scale=-2:720 $input_filename/transcoded_720p_{} \
+        -vf scale=1280x720 $input_filename/transcoded_720p_{} \
         -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
         -vf scale=-2:480 $input_filename/transcoded_480p_{} \
         -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
         -vf scale=-2:360 $input_filename/transcoded_360p_{} \
         :::: $input_filename/segment_list.txt
-    echo -e "${cyanbg}process_transcode_hpc_parallel: $?${clear}"
+    echo -e "${cyanbg}process_video_transcode_hpc_parallel: $?${clear}"
 }
 
 # same as above but only on local machine! we only use one of the process_transcode_*_parallel() functions.
@@ -228,10 +282,10 @@ function process_transcode_hpc_parallel() {
 function process_transcode_localonly_parallel() {
     echo -e "${cyanbg}process_transcode_localonly_parallel${clear}"
     # for local run,
-    parallel --bar  -j 1 \
+    parallel --bar  -j 2 \
         $ffmpeg_binary -i $input_filename/{} -copyts -avoid_negative_ts 1 \
         -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
-        -vf scale=-2:720 $input_filename/transcoded_720p_{} \
+        -vf scale=1280x720 $input_filename/transcoded_720p_{} \
         -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
         -vf scale=-2:480 $input_filename/transcoded_480p_{} \
         -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
@@ -239,10 +293,6 @@ function process_transcode_localonly_parallel() {
         :::: $input_filename/segment_list.txt
     echo -e "${cyanbg}process_transcode_localonly_parallel: $?${clear}"
 }
-
-# Armin's ffmpeg flags:
-# -i downloads/053092d3-7845-4428-a40a-4cead148559a -y -threads 2 -map 0:a:0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k -f segment -segment_time 10 -segment_list_size 0 -segment_list_flags -cache -segment_format aac -segment_list movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio.m3u8 movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio%d.aac -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=854x480 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/480p/index.m3u8 -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=1280x720 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/720p/index.m3u8
-#
 
 # here we create a .ffconcat file for each resolution using the first .ffconcat file.
 function create_resolutions_segment_list() {
@@ -258,24 +308,37 @@ function create_resolutions_segment_list() {
 # it happens very fast so that we can even ignore using the parallel command and use a `for` loop.
 function assemble_segments() {
     echo -e "${cyanbg}assemble_segments${clear}"
-    parallel --bar -j+0 \
+    parallel --bar -j 1 \
     $ffmpeg_binary -copyts -f concat -safe 0 -i $input_filename/segment_list_{1}.ffconcat \
     -c copy -map 0 -avoid_negative_ts 1 $input_filename/transcoded_video_$input_filename.{1}$input_extension \
     ::: 360p 480p 720p
     echo -e "${cyanbg}assemble_segments: $?${clear}"
 }
 
-# here we join the audio and video in a new file.
-function add_audio_videos() {
-    echo -e "${cyanbg}add_audio_videos${clear}"
-    parallel --bar -j+0 \
+# here we join the audios and videos in a new file.
+# same as extract_audios() we create a list of commands on the fly, the name of files as
+# input and then map them with their sequencial index number in the fisrt input file.
+# the -map start with 0 but we have the video as input in that position. so audio starts
+# at 1.
+function join_audios_videos() {
+    echo -e "${cyanbg}join_audios_videos${clear}"
+    local lambda_audio=""
+    local lambda_audio_map=""
+    local counter=1
+    for audio_filename in $(cat $input_filename/transcoded_audio_list.txt); do
+        lambda_audio+=" -i $input_filename/$audio_filename "
+        lambda_audio_map+=" -map $counter:a "
+        ((counter++))
+    done
+    parallel --bar -j 1 \
     $ffmpeg_binary -copyts -avoid_negative_ts 1 \
     -i $input_filename/transcoded_video_$input_filename.{1}$input_extension  \
-    -i $input_filename/transcoded_audios$audio_extension \
-    -c copy -map 0 -map 1:a \
+    $lambda_audio \
+    -c copy -map 0 \
+    $lambda_audio_map \
     $input_filename/$input_filename.{1}$input_extension \
     ::: 360p 480p 720p
-    echo -e "${cyanbg}add_audio_videos: $?${clear}"
+    echo -e "${cyanbg}join_audios_videos: $?${clear}"
 }
 
 
@@ -297,33 +360,43 @@ wait
 time create_filelist &
 wait
 
+time extract_audios &
+wait
+
 # if this script is used like : bash gpff.bash "filename.mkv" true
 # it will only in localonly mode
 if [[ $localonly != "true" ]]; then
     time remote_mkdir_filename &
     wait
-    # run in the background without waiting
-    # so that we can run the second command in parallel
-    # there will be a bit messy in the output, but will save around 5 minutes time.
-    time transcode_audio &
-    time process_transcode_hpc_parallel &
+    # here we check if there is only one audio track, we transcode it locally
+    # but run as background to save that time and start process_audio_transcode_hpc_parallel()
+    # sooner and in parallel with transcode_audio().
+    # otherwise we transcode the audio tracks in parallel remotely.
+    if [[ $count_audios -eq 1 ]]; then
+        time transcode_audio &
+    else
+        time process_audio_transcode_hpc_parallel &
+        wait
+    fi
+    time process_video_transcode_hpc_parallel &
     wait
     time remote_rm_filename &
     wait
 else
-    # we first transcode the audio first, because there is only one system.
     time transcode_audio &
     wait
     time process_transcode_localonly_parallel &
     wait
 fi
 
+time create_transcoded_list &
+wait
 time create_resolutions_segment_list &
 wait
 time assemble_segments &
 wait
 
-time add_audio_videos &
+time join_audios_videos &
 wait
 
 time final_cleanup &
