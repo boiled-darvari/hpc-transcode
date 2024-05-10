@@ -12,16 +12,76 @@
 # (it's better if you run inside tmux)
 #
 
+# UPDATE:
+# one of the interesting examples is this blow file (magnet link):
+# ```
+# transmission-cli "magnet:?xt=urn:btih:F6468653281CC3CD9BDA3E78F399752C13CBA61D&dn=Madame.Web.2024.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA&tr=udp%3A%2F%2Fbt1.archive.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=https%3A%2F%2Ftracker1.520.jp%3A443%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce&tr=http%3A%2F%2Fbt.endpot.com%3A80%2Fannounce&tr=udp%3A%2F%2Fuploads.gamecoast.net%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker1.bt.moack.co.kr%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fcoppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.zer0day.to%3A1337%2Fannounce"
+# ```
+#
+# in above file, with 200 seconds, I had several errors but more important one was this one for the
+# last segment:
+# ```
+# [mpegts @ 0x558674a05380] start time for stream 1 is not set in estimate_timings_from_pts
+# [mpegts @ 0x558674a05380] stream 1 : no TS found at start of file, duration not set
+# [mpegts @ 0x558674a05380] Could not find codec parameters for stream 1 (Audio: aac ([15][0][0][0] / 0x000F), 0 channels): unspecified sample format
+# Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
+# ```
+#
+# the main error is this: "Could not find codec parameters for stream 1 (Audio: aac"
+# let's look at it deeper.
+# ```
+# $ probe -i "Madame*.mkv"
+#  Stream #0:0: Video: [SNIP]
+#     Metadata:
+#       BPS             : 1722575
+#       DURATION        : 01:57:49.938000000
+#       [SNIP]
+#   Stream #0:1(eng): Audio: aac (HE-AAC), 48000 Hz, 5.1, fltp (default)
+#     Metadata:
+#       BPS             : 207064
+#       DURATION        : 01:56:11.222000000
+# ```
+#
+# you can see that there is a different between duration of video and audio. so lest see what's happened
+# to the last segment we had:
+# ```
+# $ ffprobe -i "Madame*/segment_0035.ts"
+#   Duration: 00:01:06.27, start: 1.567000, bitrate: 105 kb/s
+#   [SNIP]
+#   Stream #0:0[0x100]: Video: hevc (Main 10) (HEVC / 0x43564548), yuv420p10le(tv, bt709), 1920x800, 23.98 fps, 23.98 tbr, 90k tbn
+#   Stream #0:1[0x101](eng): Audio: aac ([15][0][0][0] / 0x000F), 0 channels
+# ```
+#
+
+
 # our color for just separate the sections.
 cyanbg="\033[0;46m"
 clear="\033[0m"
 
 work_dir="/mnt/data/"
 
-# analysing the input
-input_file="$1"
+# analysing the input and change the spaces in the name to dash
+# so that we will see less bugs in the future
+input_temp_name="$1"
+input_corrected_name=$(echo "$input_temp_name" | sed 's/ /\-/g')
+
+mv "$input_temp_name" $input_corrected_name
+input_file="$input_corrected_name"
 input_extension=".${input_file##*.}"
 input_filename="${input_file%.*}"
+
+# changing the audio transcoded extension for debug purpose only
+audio_extension=".m4a"
+
+# here we choose between static build of ffmpeg and packages.
+ffmpeg_binary="./ffmpeg-git-20240504-amd64-static/ffmpeg"
+# ffmpeg_binary="/mnt/data/ffmpeg-git-20240504-amd64-static/ffmpeg"
+# ffmpeg_binary="ffmpeg"
+
+# here we choose between static build of ffprobe and packages.
+ffprobe_binary="./ffmpeg-git-20240504-amd64-static/ffprobe"
+# ffprobe_binary="/mnt/data/ffmpeg-git-20240504-amd64-static/ffprobe"
+# ffprobe_binary="ffprobe"
 
 # do we want to transcode only mkv files?
 # if [[ input_extension != ".mkv" ]] ; then
@@ -41,6 +101,17 @@ function makedir_or_cleanup() {
     echo -e "${cyanbg}makedir_or_cleanup: $?${clear}"
 }
 
+# we extract and transcode the audio of the input file.
+# it's fine if we have multi audio, but let's make it simpler
+# I think, we should not use -async 1 anymore here.
+function transcode_audio() {
+    echo -e "${cyanbg}transcode_audio${clear}"
+    $ffmpeg_binary -i $input_file -copyts \
+        -map a -map_chapters -1 -acodec aac -strict experimental -ar 44100 -ac 2 -ab 128k \
+        $input_filename/transcoded_audios$audio_extension
+    echo -e "${cyanbg}transcode_audio: $?${clear}"
+}
+
 # I'm not sure about this flag yet, let's keep it here.
 # it will add the headers of the main file to each segment files.
 # IIRC, it will also make the process a bit long.
@@ -55,62 +126,23 @@ function divide_mkv() {
     # the duration can be anything, but the smaller it goes, the more overhead we will have.
     # also the bigger it goes, there is a chance that we will have the last file our bottleneck.
     # so it should be not so long, not so short. 200 in seconds means 00:03:20
-    # UPDATE:
-    # one of the interesting examples is this blow file (magnet link):
-    # ```
-    # transmission-cli "magnet:?xt=urn:btih:F6468653281CC3CD9BDA3E78F399752C13CBA61D&dn=Madame.Web.2024.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA&tr=udp%3A%2F%2Fbt1.archive.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=https%3A%2F%2Ftracker1.520.jp%3A443%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce&tr=http%3A%2F%2Fbt.endpot.com%3A80%2Fannounce&tr=udp%3A%2F%2Fuploads.gamecoast.net%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker1.bt.moack.co.kr%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fcoppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.zer0day.to%3A1337%2Fannounce"
-    # ```
-    #
-    # in above file, with 200 seconds, I had several errors but more important one was this one for the
-    # last segment:
-    # ```
-    # [mpegts @ 0x558674a05380] start time for stream 1 is not set in estimate_timings_from_pts
-    # [mpegts @ 0x558674a05380] stream 1 : no TS found at start of file, duration not set
-    # [mpegts @ 0x558674a05380] Could not find codec parameters for stream 1 (Audio: aac ([15][0][0][0] / 0x000F), 0 channels): unspecified sample format
-    # Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
-    # ```
-    #
-    # the main error is this: "Could not find codec parameters for stream 1 (Audio: aac"
-    # let's look at it deeper.
-    # ```
-    # $ probe -i "Madame*.mkv"
-    #  Stream #0:0: Video: [SNIP]
-    #     Metadata:
-    #       BPS             : 1722575
-    #       DURATION        : 01:57:49.938000000
-    #       [SNIP]
-    #   Stream #0:1(eng): Audio: aac (HE-AAC), 48000 Hz, 5.1, fltp (default)
-    #     Metadata:
-    #       BPS             : 207064
-    #       DURATION        : 01:56:11.222000000
-    # ```
-    #
-    # you can see that there is a different between duration of video and audio. so lest see what's happened
-    # to the last segment we had:
-    # ```
-    # $ ffprobe -i "Madame*/segment_0035.ts"
-    #   Duration: 00:01:06.27, start: 1.567000, bitrate: 105 kb/s
-    #   [SNIP]
-    #   Stream #0:0[0x100]: Video: hevc (Main 10) (HEVC / 0x43564548), yuv420p10le(tv, bt709), 1920x800, 23.98 fps, 23.98 tbr, 90k tbn
-    #   Stream #0:1[0x101](eng): Audio: aac ([15][0][0][0] / 0x000F), 0 channels
-    # ```
-    #
-    local duration=300
+    local duration=200
     # here we are going to calculate the frame_rate to be used in segment_time_delta as explained here in worse case:
     # https://ffmpeg.org/ffmpeg-all.html "For constant frame rate videos a value of 1/(2*frame_rate) should address
     # the worst case mismatch between the specified time and the time set by force_key_frames."
     # but in the several test I had, this calculation until ~10.0 had a same outcome.
     # we can keep it or ignore it
-    local frame_rate=$(ffprobe -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate $input_file)
+    local frame_rate=$($ffprobe_binary -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate $input_file)
     local segment_time_delta=$(awk 'BEGIN{printf "%6f", 1/(2*'$frame_rate')}')
     # here we just do some split-copy but I think -copyts is also useful in some cases and it can't hurt
     # so do avoid_negative_ts
     # this is important to note that WE DO NOT COPY/transfer ANY SUBTITLES!!! because I have had problem in some
     # cases. if you want the subtitle, you can extract it easily and attach it again. so with -sn, we ignore/delete
     # the subtitles in transcoding process!
-    ffmpeg -i $input_file -c copy -sn -copyts -force_key_frames "expr:gte(t,n_forced*$duration)" -f segment \
-        -segment_time_delta $segment_time_delta -segment_time $duration \
-        -avoid_negative_ts 1  -reset_timestamps 1 -map 0 \
+    $ffmpeg_binary -i $input_file -map v -map_chapters -1 -c copy -an -sn \
+        -copyts -force_key_frames "expr:gte(t,n_forced*$duration)" \
+        -f segment -segment_time_delta $segment_time_delta -segment_time $duration \
+        -avoid_negative_ts 1  -reset_timestamps 1 \
         -segment_list_type ffconcat -segment_list $input_filename/segment_list.ffconcat \
         $input_filename/segment_%04d.ts
     echo -e "${cyanbg}divide_mkv: $?${clear}"
@@ -166,6 +198,9 @@ function remote_rm_filename() {
 # slow us down, because the ffmpeg is using multi-thread itself even we force parallel to use one CPU core. but
 # the qustion here is that why we are using -j+0 to use all cores, if the ffmpeg is doing it itself? the answer
 # is that the ffmpeg has it's own bottlenecks and in some cases, I find it beneficial this way. (maybe I'm wrong?)
+# in the new tests, I decided to use -fps_mode passthrough not anything else. so we will have a
+# synchronize output at the end. in my several test, the audio timing were just fine, but the
+# only problem was the video. now that even transcoding mp4 has no problem.
 function process_transcode_hpc_parallel() {
     echo -e "${cyanbg}process_transcode_hpc_parallel${clear}"
     # for multi-node run
@@ -176,15 +211,12 @@ function process_transcode_hpc_parallel() {
         --return $input_filename/transcoded_480p_{} \
         --return $input_filename/transcoded_360p_{} \
         --cleanup \
-        ffmpeg -analyzeduration 10000000 -probesize 10000000 -i $input_filename/{} -copyts \
-        -map 0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k \
-        -pix_fmt yuv420p -fps_mode cfr -vcodec h264 \
-        -vf scale=1280x720 $input_filename/transcoded_720p_{} \
-        -map 0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k \
-        -pix_fmt yuv420p -fps_mode cfr -vcodec h264 \
+        $ffmpeg_binary -i $input_filename/{} -copyts -avoid_negative_ts 1 \
+        -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
+        -vf scale=-2:720 $input_filename/transcoded_720p_{} \
+        -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
         -vf scale=-2:480 $input_filename/transcoded_480p_{} \
-        -map 0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k \
-        -pix_fmt yuv420p -fps_mode cfr -vcodec h264 \
+        -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
         -vf scale=-2:360 $input_filename/transcoded_360p_{} \
         :::: $input_filename/segment_list.txt
     echo -e "${cyanbg}process_transcode_hpc_parallel: $?${clear}"
@@ -196,16 +228,13 @@ function process_transcode_hpc_parallel() {
 function process_transcode_localonly_parallel() {
     echo -e "${cyanbg}process_transcode_localonly_parallel${clear}"
     # for local run,
-    parallel --bar  -j+0 \
-        ffmpeg -analyzeduration 10000000 -probesize 10000000 -i $input_filename/{} -copyts \
-        -map 0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k \
-        -pix_fmt yuv420p -fps_mode cfr -vcodec h264 \
-        -vf scale=1280x720 $input_filename/transcoded_720p_{} \
-        -map 0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k \
-        -pix_fmt yuv420p -fps_mode cfr -vcodec h264 \
+    parallel --bar  -j 1 \
+        $ffmpeg_binary -i $input_filename/{} -copyts -avoid_negative_ts 1 \
+        -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
+        -vf scale=-2:720 $input_filename/transcoded_720p_{} \
+        -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
         -vf scale=-2:480 $input_filename/transcoded_480p_{} \
-        -map 0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k \
-        -pix_fmt yuv420p -fps_mode cfr -vcodec h264 \
+        -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
         -vf scale=-2:360 $input_filename/transcoded_360p_{} \
         :::: $input_filename/segment_list.txt
     echo -e "${cyanbg}process_transcode_localonly_parallel: $?${clear}"
@@ -230,16 +259,31 @@ function create_resolutions_segment_list() {
 function assemble_segments() {
     echo -e "${cyanbg}assemble_segments${clear}"
     parallel --bar -j+0 \
-    ffmpeg -f concat -safe 0 -i $input_filename/segment_list_{1}.ffconcat \
-    -c copy -map 0 -avoid_negative_ts 1 $input_filename/$input_filename.{1}$input_extension \
+    $ffmpeg_binary -copyts -f concat -safe 0 -i $input_filename/segment_list_{1}.ffconcat \
+    -c copy -map 0 -avoid_negative_ts 1 $input_filename/transcoded_video_$input_filename.{1}$input_extension \
     ::: 360p 480p 720p
     echo -e "${cyanbg}assemble_segments: $?${clear}"
 }
+
+# here we join the audio and video in a new file.
+function add_audio_videos() {
+    echo -e "${cyanbg}add_audio_videos${clear}"
+    parallel --bar -j+0 \
+    $ffmpeg_binary -copyts -avoid_negative_ts 1 \
+    -i $input_filename/transcoded_video_$input_filename.{1}$input_extension  \
+    -i $input_filename/transcoded_audios$audio_extension \
+    -c copy -map 0 -map 1:a \
+    $input_filename/$input_filename.{1}$input_extension \
+    ::: 360p 480p 720p
+    echo -e "${cyanbg}add_audio_videos: $?${clear}"
+}
+
 
 # here we cleanup the temporarily files in local and only the final transcooded files will remain.
 function final_cleanup() {
     echo -e "${cyanbg}final_cleanup${clear}"
     rm -f $input_filename/*segment_*
+    # rm -f $input_filename/transcoded_*
     echo -e "${cyanbg}final_cleanup: $?${clear}"
 }
 
@@ -258,11 +302,18 @@ wait
 if [[ $localonly != "true" ]]; then
     time remote_mkdir_filename &
     wait
+    # run in the background without waiting
+    # so that we can run the second command in parallel
+    # there will be a bit messy in the output, but will save around 5 minutes time.
+    time transcode_audio &
     time process_transcode_hpc_parallel &
     wait
     time remote_rm_filename &
     wait
 else
+    # we first transcode the audio first, because there is only one system.
+    time transcode_audio &
+    wait
     time process_transcode_localonly_parallel &
     wait
 fi
@@ -272,5 +323,13 @@ wait
 time assemble_segments &
 wait
 
-# time final_cleanup &
-# wait
+time add_audio_videos &
+wait
+
+time final_cleanup &
+wait
+
+
+#  -map 0:a:0 -f segment -segment_time 10 -segment_list_size 0 -segment_list_flags -cache -segment_format aac -segment_list
+#  -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0
+# -i downloads/053092d3-7845-4428-a40a-4cead148559a -y -threads 2 -map 0:a:0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k -f segment -segment_time 10 -segment_list_size 0 -segment_list_flags -cache -segment_format aac -segment_list movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio.m3u8 movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio%d.aac -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=854x480 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/480p/index.m3u8 -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=1280x720 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/720p/index.m3u8
