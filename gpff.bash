@@ -435,6 +435,7 @@ function make_hls() {
         ((audio_counter++))
         ((counter++))
     done
+    mkdir -p $input_filename/hls
     $ffmpeg_binary \
         $lambda_video \
         $lambda_audio \
@@ -445,7 +446,7 @@ function make_hls() {
        -var_stream_map "$var_stream_map" \
        -f hls -hls_time 10 -hls_flags independent_segments \
        -hls_playlist 1 -hls_playlist_type vod -master_pl_name playlist.m3u8 \
-       -hls_segment_filename "$input_filename/%v/file_%04d.ts" "$input_filename/%v/index.m3u8"
+       -hls_segment_filename "$input_filename/hls/%v/file_%04d.ts" "$input_filename/hls/%v/index.m3u8"
     echo -e "${cyanbg}make_hls: $?${clear}"
 }
 
@@ -453,6 +454,8 @@ function make_hls() {
 function final_cleanup() {
     echo -e "${cyanbg}final_cleanup${clear}"
     rm -f $input_filename/transcoded_*
+    rm -f $input_filename/audio_stream_*
+    rm -f $input_filename/audio_list.txt
     echo -e "${cyanbg}final_cleanup: $?${clear}"
 }
 
