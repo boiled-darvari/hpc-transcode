@@ -406,6 +406,7 @@ function segments_cleenup() {
 
 # just a test function for now to see how much time it takes to do all spliting in HLS mode
 # for all video and audio files. the master playlist is useless if you want to use it in VLC
+# it seems that this is exactly what we need? 
 function make_hls() {
     echo -e "${cyanbg}make_hls${clear}"
     local counter=0
@@ -447,6 +448,126 @@ function make_hls() {
        -hls_segment_filename "$input_filename/%v/file_%04d.ts" "$input_filename/%v/index.m3u8"
     echo -e "${cyanbg}make_hls: $?${clear}"
 }
+
+# here we cleanup the temporarily files in local and only the final transcooded files will remain.
+function final_cleanup() {
+    echo -e "${cyanbg}final_cleanup${clear}"
+    rm -f $input_filename/transcoded_*
+    echo -e "${cyanbg}final_cleanup: $?${clear}"
+}
+
+# here we run the command step by step and wait in each step to be truely completed before going to next done
+# time is for debug only. we usually don't need the &wait at all. but in some cases will be helpful
+time makedir_or_cleanup &
+wait
+
+time extract_audios &
+wait
+
+time divide_audio &
+wait
+
+time create_audio_filelist &
+wait
+
+time divide_video &
+wait
+
+time create_video_filelist &
+wait
+
+# if this script is used like : bash gpff.bash "filename.mkv" true
+# it will only in localonly mode
+if [[ $localonly != "true" ]]; then
+    time remote_mkdir_filename &
+    wait
+    time process_audio_transcode_hpc_parallel &
+    wait
+    time process_video_transcode_hpc_parallel &
+    wait
+    time remote_rm_filename &
+    wait
+else
+    time transcode_audio &
+    wait
+    time process_video_transcode_localonly_parallel &
+    wait
+fi
+
+
+time create_audio_transcoded_list &
+wait
+
+time assemble_audio_segments &
+wait
+
+time create_resolutions_segment_list &
+wait
+time assemble_video_segments &
+wait
+
+time join_audios_videos &
+wait
+
+time segments_cleenup &
+wait
+
+time make_hls &
+wait
+
+time final_cleanup &
+wait
+
+
+
+# =================================== trash ==================================================
+
+# -i downloads/053092d3-7845-4428-a40a-4cead148559a -y -threads 2 -map 0:a:0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k -f segment -segment_time 10 -segment_list_size 0 -segment_list_flags -cache -segment_format aac -segment_list movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio.m3u8 movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio%d.aac -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=854x480 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/480p/index.m3u8 -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=1280x720 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/720p/index.m3u8
+
+
+# # like previous function but each resolution has their own audio and playlist.
+# function make_hls() {
+#     echo -e "${cyanbg}make_hls${clear}"
+#     for resolution in ${resolutions[@]}; do
+#         local counter=0
+#         local var_stream_map=""
+#         local video_counter=0
+#         local lambda_video=""
+#         local lambda_video_map=""
+#         local lambda_video_copy=""
+#         lambda_video+=" -i $input_filename/transcoded_video_$input_filename.${resolution}p$input_extension "
+#         lambda_video_map+=" -map $counter:v:0 "
+#         lambda_video_copy+=" -c:v:$video_counter copy -copyts "
+#         var_stream_map+="v:$video_counter,agroup:vid_${resolution}_aud,name:video_$video_counter "
+#         ((video_counter++))
+#         ((counter++))
+#         local audio_counter=0
+#         local lambda_audio=""
+#         local lambda_audio_map=""
+#         local lambda_audio_copy=""
+#         for audio_filename in $(cat $input_filename/audio_list.txt); do
+#             lambda_audio+=" -i $input_filename/transcoded_$audio_filename "
+#             lambda_audio_map+=" -map $counter:a:0 "
+#             lambda_audio_copy+=" -c:a:$audio_counter copy -copyts "
+#             var_stream_map+="a:$audio_counter,agroup:vid_${resolution}_aud,name:audio_$audio_counter "
+#             ((audio_counter++))
+#             ((counter++))
+#         done
+#         mkdir -p "$input_filename/$resolution/"
+#         $ffmpeg_binary \
+#             $lambda_video \
+#             $lambda_audio \
+#             $lambda_video_map \
+#             $lambda_audio_map \
+#             $lambda_video_copy \
+#             $lambda_audio_copy \
+#         -var_stream_map "$var_stream_map" \
+#         -f hls -hls_time 10 -hls_flags independent_segments \
+#         -hls_playlist 1 -hls_playlist_type vod -master_pl_name playlist.m3u8 \
+#         -hls_segment_filename "$input_filename/$resolution/%v/file_%04d.ts" "$input_filename/$resolution/%v/index.m3u8"
+#     done
+#     echo -e "${cyanbg}make_hls: $?${clear}"
+# }
 
 #
 # function make_hls() {
@@ -513,78 +634,3 @@ function make_hls() {
 #
 #
 #     ffmpeg -i input_video.mp4 -i audio1.mp3 -i audio2.mp3 -map 0:v:0 -map 1:a:0 -map 2:a:0 -c:v copy -c:a copy -var_stream_map "v:0,a:0,agroup:audio,a:1,agroup:audio2" -master_pl_name master.m3u8 -f hls -hls_time 10 -hls_flags independent_segments -hls_playlist_type vod -hls_segment_filename "video_%v_%03d.ts" output.m3u8
-
-# here we cleanup the temporarily files in local and only the final transcooded files will remain.
-function final_cleanup() {
-    echo -e "${cyanbg}final_cleanup${clear}"
-    # rm -f $input_filename/transcoded_*
-    echo -e "${cyanbg}final_cleanup: $?${clear}"
-}
-
-# here we run the command step by step and wait in each step to be truely completed before going to next done
-# time is for debug only. we usually don't need the &wait at all. but in some cases will be helpful
-time makedir_or_cleanup &
-wait
-
-time extract_audios &
-wait
-
-time divide_audio &
-wait
-
-time create_audio_filelist &
-wait
-
-time divide_video &
-wait
-
-time create_video_filelist &
-wait
-
-# if this script is used like : bash gpff.bash "filename.mkv" true
-# it will only in localonly mode
-if [[ $localonly != "true" ]]; then
-    time remote_mkdir_filename &
-    wait
-    time process_audio_transcode_hpc_parallel &
-    wait
-    time process_video_transcode_hpc_parallel &
-    wait
-    time remote_rm_filename &
-    wait
-else
-    time transcode_audio &
-    wait
-    time process_video_transcode_localonly_parallel &
-    wait
-fi
-
-
-time create_audio_transcoded_list &
-wait
-
-time assemble_audio_segments &
-wait
-
-time create_resolutions_segment_list &
-wait
-time assemble_video_segments &
-wait
-
-time join_audios_videos &
-wait
-
-# time segments_cleenup &
-# wait
-
-time make_hls &
-wait
-
-time final_cleanup &
-wait
-
-
-
-
-
-# -i downloads/053092d3-7845-4428-a40a-4cead148559a -y -threads 2 -map 0:a:0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k -f segment -segment_time 10 -segment_list_size 0 -segment_list_flags -cache -segment_format aac -segment_list movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio.m3u8 movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio%d.aac -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=854x480 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/480p/index.m3u8 -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=1280x720 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/720p/index.m3u8
