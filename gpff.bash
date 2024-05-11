@@ -12,48 +12,6 @@
 # (it's better if you run inside tmux)
 #
 
-# UPDATE:
-# one of the interesting examples is this blow file (magnet link):
-# ```
-# transmission-cli "magnet:?xt=urn:btih:F6468653281CC3CD9BDA3E78F399752C13CBA61D&dn=Madame.Web.2024.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA&tr=udp%3A%2F%2Fbt1.archive.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=https%3A%2F%2Ftracker1.520.jp%3A443%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce&tr=http%3A%2F%2Fbt.endpot.com%3A80%2Fannounce&tr=udp%3A%2F%2Fuploads.gamecoast.net%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker1.bt.moack.co.kr%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fcoppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.zer0day.to%3A1337%2Fannounce"
-# ```
-#
-# in above file, with 200 seconds, I had several errors but more important one was this one for the
-# last segment:
-# ```
-# [mpegts @ 0x558674a05380] start time for stream 1 is not set in estimate_timings_from_pts
-# [mpegts @ 0x558674a05380] stream 1 : no TS found at start of file, duration not set
-# [mpegts @ 0x558674a05380] Could not find codec parameters for stream 1 (Audio: aac ([15][0][0][0] / 0x000F), 0 channels): unspecified sample format
-# Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
-# ```
-#
-# the main error is this: "Could not find codec parameters for stream 1 (Audio: aac"
-# let's look at it deeper.
-# ```
-# $ probe -i "Madame*.mkv"
-#  Stream #0:0: Video: [SNIP]
-#     Metadata:
-#       BPS             : 1722575
-#       DURATION        : 01:57:49.938000000
-#       [SNIP]
-#   Stream #0:1(eng): Audio: aac (HE-AAC), 48000 Hz, 5.1, fltp (default)
-#     Metadata:
-#       BPS             : 207064
-#       DURATION        : 01:56:11.222000000
-# ```
-#
-# you can see that there is a different between duration of video and audio. so lest see what's happened
-# to the last segment we had:
-# ```
-# $ ffprobe -i "Madame*/segment_0035.ts"
-#   Duration: 00:01:06.27, start: 1.567000, bitrate: 105 kb/s
-#   [SNIP]
-#   Stream #0:0[0x100]: Video: hevc (Main 10) (HEVC / 0x43564548), yuv420p10le(tv, bt709), 1920x800, 23.98 fps, 23.98 tbr, 90k tbn
-#   Stream #0:1[0x101](eng): Audio: aac ([15][0][0][0] / 0x000F), 0 channels
-# ```
-#
-
-
 # our color for just separate the sections.
 cyanbg="\033[0;46m"
 clear="\033[0m"
@@ -520,6 +478,57 @@ wait
 
 time final_cleanup &
 wait
+
+
+
+
+
+
+# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% thinking %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+# UPDATE:
+# one of the interesting examples is this blow file (magnet link):
+# ```
+# transmission-cli "magnet:?xt=urn:btih:F6468653281CC3CD9BDA3E78F399752C13CBA61D&dn=Madame.Web.2024.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA&tr=udp%3A%2F%2Fbt1.archive.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=https%3A%2F%2Ftracker1.520.jp%3A443%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce&tr=http%3A%2F%2Fbt.endpot.com%3A80%2Fannounce&tr=udp%3A%2F%2Fuploads.gamecoast.net%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker1.bt.moack.co.kr%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fcoppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.zer0day.to%3A1337%2Fannounce"
+# ```
+#
+# in above file, with 200 seconds, I had several errors but more important one was this one for the
+# last segment:
+# ```
+# [mpegts @ 0x558674a05380] start time for stream 1 is not set in estimate_timings_from_pts
+# [mpegts @ 0x558674a05380] stream 1 : no TS found at start of file, duration not set
+# [mpegts @ 0x558674a05380] Could not find codec parameters for stream 1 (Audio: aac ([15][0][0][0] / 0x000F), 0 channels): unspecified sample format
+# Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
+# ```
+#
+# the main error is this: "Could not find codec parameters for stream 1 (Audio: aac"
+# let's look at it deeper.
+# ```
+# $ probe -i "Madame*.mkv"
+#  Stream #0:0: Video: [SNIP]
+#     Metadata:
+#       BPS             : 1722575
+#       DURATION        : 01:57:49.938000000
+#       [SNIP]
+#   Stream #0:1(eng): Audio: aac (HE-AAC), 48000 Hz, 5.1, fltp (default)
+#     Metadata:
+#       BPS             : 207064
+#       DURATION        : 01:56:11.222000000
+# ```
+#
+# you can see that there is a different between duration of video and audio. so lest see what's happened
+# to the last segment we had:
+# ```
+# $ ffprobe -i "Madame*/segment_0035.ts"
+#   Duration: 00:01:06.27, start: 1.567000, bitrate: 105 kb/s
+#   [SNIP]
+#   Stream #0:0[0x100]: Video: hevc (Main 10) (HEVC / 0x43564548), yuv420p10le(tv, bt709), 1920x800, 23.98 fps, 23.98 tbr, 90k tbn
+#   Stream #0:1[0x101](eng): Audio: aac ([15][0][0][0] / 0x000F), 0 channels
+# ```
+#
+
+
+
 
 
 
