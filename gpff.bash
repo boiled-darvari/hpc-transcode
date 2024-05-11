@@ -40,11 +40,11 @@ ffprobe_binary="./ffmpeg-git-20240504-amd64-static/ffprobe"
 # ffprobe_binary="/mnt/data/ffmpeg-git-20240504-amd64-static/ffprobe"
 # ffprobe_binary="ffprobe"
 
-# do we want to transcode only mkv files?
-# if [[ input_extension != ".mkv" ]] ; then
-#     echo "give me .mkv"
-#     exit 1
-# fi
+# do we want to transcode only mkv and mp4 files?
+if [[ input_extension != ".mkv" ]] || [[ input_extension != ".mp4" ]] ; then
+    echo "give me .mkv or .mp4"
+    exit 1
+fi
 
 # to check if we should run local only. we will use it at the end.
 localonly="$2"
