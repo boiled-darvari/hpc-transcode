@@ -1,8 +1,7 @@
 #!/bin/bash
 
-#
-#
-# how to use:
+
+### how to use:
 #
 # $ bash gpff.bash "filename.mkv"
 #
@@ -11,6 +10,23 @@
 #
 # (it's better if you run inside tmux)
 #
+
+
+### preperations:
+#
+# - generate new passwordless ssh-key in master server
+# - copy ssh-key-id to worker/slave servers
+#
+# - add ssd drive/partition with the same path in all servers (e.g. "/mnt/data/")
+# - change the work_dir value based on the previous step
+#
+# - download ffmepg: https://ffmpeg.org/download.html
+# - copy and extract to the work_dir path of all servers
+# - change the ffmpeg_binary and ffprobe_binary value based on that
+#
+# - copy the gpff.bash file to the work_dir path
+#
+# all are ready
 
 # our color for just separate the sections.
 cyanbg="\033[0;46m"
