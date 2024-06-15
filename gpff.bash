@@ -17,6 +17,9 @@
 # - generate new passwordless ssh-key in master server
 # - copy ssh-key-id to worker/slave servers
 #
+# - in the master server, add worker server list to ~/.parallel/sshloginfile file
+# according to --slf structure in the parallel man page
+#
 # - add ssd drive/partition with the same path in all servers (e.g. "/mnt/data/")
 # - change the work_dir value based on the previous step
 #
