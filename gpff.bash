@@ -12,7 +12,7 @@
 #
 
 
-### preperations:
+### preparations:
 #
 # - generate new passwordless ssh-key in master server
 # - copy ssh-key-id to worker/slave servers
@@ -23,7 +23,7 @@
 # - add ssd drive/partition with the same path in all servers (e.g. "/mnt/data/")
 # - change the work_dir value based on the previous step
 #
-# - download ffmepg: https://ffmpeg.org/download.html
+# - download ffmpeg: https://ffmpeg.org/download.html
 # - copy and extract to the work_dir path of all servers
 # - change the ffmpeg_binary and ffprobe_binary value based on that
 #
@@ -42,7 +42,11 @@ work_dir="/mnt/data/"
 input_temp_name="$1"
 input_corrected_name=$(echo "$input_temp_name" | sed 's/[][ ]/\-/g')
 if [[ "$input_temp_name" != "$input_corrected_name" ]]; then
-    mv "$input_temp_name" $input_corrected_name
+    # if [[ -e "$input_corrected_name" ]]; then
+    #     echo "Error: Target filename '$input_corrected_name' already exists."
+    #     exit 1
+    # fi
+    mv "$input_temp_name" "$input_corrected_name"
 fi
 
 input_file="$input_corrected_name"
@@ -60,7 +64,7 @@ ffprobe_binary="./ffmpeg-git-20240504-amd64-static/ffprobe"
 # ffprobe_binary="ffprobe"
 
 # do we want to transcode only mkv and mp4 files?
-if [[ "$input_extension" != ".mkv" ]] || [[ "$input_extension" != ".mp4" ]] ; then
+if [[ "$input_extension" != ".mkv" ]] && [[ "$input_extension" != ".mp4" ]] ; then
     echo "give me .mkv or .mp4"
     exit 1
 fi
@@ -84,8 +88,8 @@ hls_duration=10
 # to make sure that the directory is empty so we won't get any intrupts in the process.
 function makedir_or_cleanup() {
     echo -e "${cyanbg}makedir_or_cleanup${clear}"
-    mkdir -p $input_filename
-    rm -f $input_filename/*
+    mkdir -p "$input_filename"
+    rm -rf "$input_filename"/*
     # printing the exit result of the last command. for debug and maybe future use.
     echo -e "${cyanbg}makedir_or_cleanup: $?${clear}"
 }
@@ -102,16 +106,16 @@ function makedir_or_cleanup() {
 # will see at least one colon after the number.)
 function extract_audios() {
     echo -e "${cyanbg}extract_audios${clear}"
-    local audio_indexes=$($ffprobe_binary -loglevel error -select_streams a -show_entries stream=index -of csv=p=0 $input_file | sed 's/,//g')
+    local audio_indexes=$($ffprobe_binary -loglevel error -select_streams a -show_entries stream=index -of csv=p=0 "$input_file" | sed 's/,//g')
     local lambda_commands=""
     for index in $audio_indexes; do
         local audio_temp_name="audio_stream_$index.m4a"
         # here we are going to use -map 0:index instead of -map a:index
         # that's because we are getting the total index number not index in audio streams
-        lambda_commands+=" -map 0:"$index" -copyts -map_chapters -1 -c copy $input_filename/$audio_temp_name "
-        echo "$audio_temp_name" >> $input_filename/audio_list.txt
+        lambda_commands+=" -map 0:"$index" -copyts -map_chapters -1 -c copy \"$input_filename/$audio_temp_name\" "
+        echo "$audio_temp_name" >> "$input_filename/audio_list.txt"
     done
-    $ffmpeg_binary -i $input_file $lambda_commands
+    $ffmpeg_binary -i "$input_file" $lambda_commands
     echo -e "${cyanbg}extract_audios: $?${clear}"
 }
 
@@ -133,9 +137,9 @@ function divide_audio() {
 # have. we will use this file to transcode remotely.
 function create_audio_filelist() {
     echo -e "${cyanbg}create_audio_filelist${clear}"
-    for audio_file_name in $(cat $input_filename/audio_list.txt); do
+    for audio_file_name in $(cat "$input_filename/audio_list.txt"); do
         audio_clean_file_name="${audio_file_name%.*}"
-        grep -oE '[^ ]+.m4a' $input_filename/"$audio_clean_file_name"_segment_list.ffconcat \
+        grep -oE '[^ ]+.m4a' "$input_filename/$audio_clean_file_name"_segment_list.ffconcat \
         > $input_filename/"$audio_clean_file_name"_segment_list.txt
     done
     echo -e "${cyanbg}create_audio_filelist: $?${clear}"
@@ -148,7 +152,7 @@ function create_audio_filelist() {
 function process_audio_transcode_hpc_parallel() {
     echo -e "${cyanbg}process_audio_transcode_hpc_parallel${clear}"
     # for multi-node run
-    cat $input_filename/audio_stream_*_segment_list.txt | \
+    cat "$input_filename"/audio_stream_*_segment_list.txt | \
     parallel --bar  -j 2 \
         -S '..,1/:' --delay 0.1 --sshdelay 0.1 --workdir /mnt/data/ \
         --transferfile $input_filename/{}\
@@ -166,7 +170,7 @@ function process_audio_transcode_hpc_parallel() {
 # (I think, we should stop using -async 1 here.)
 function transcode_audio() {
     echo -e "${cyanbg}transcode_audio${clear}"
-    cat $input_filename/audio_stream_*_segment_list.txt | \
+    cat "$input_filename"/audio_stream_*_segment_list.txt | \
     parallel --bar  -j 2 \
         $ffmpeg_binary -i $input_filename/{} -copyts \
         -map a -map_chapters -1 -acodec aac -strict experimental -ar 44100 -ac 2 -ab 128k \
@@ -181,11 +185,11 @@ function transcode_audio() {
 # file name in the list.
 function create_audio_transcoded_list() {
     echo -e "${cyanbg}create_audio_transcoded_list${clear}"
-    for audio_file_name in $(cat $input_filename/audio_list.txt); do
+    for audio_file_name in $(cat "$input_filename/audio_list.txt"); do
         audio_clean_file_name="${audio_file_name%.*}"
         sed 's/\(file \)\(.*\).m4a/\1transcoded_\2\.m4a/g' \
-        $input_filename/"$audio_clean_file_name"_segment_list.ffconcat \
-        > $input_filename/transcoded_"$audio_clean_file_name"_segment_list.ffconcat
+        "$input_filename/$audio_clean_file_name"_segment_list.ffconcat \
+        > "$input_filename/transcoded_$audio_clean_file_name"_segment_list.ffconcat
     done
     echo -e "${cyanbg}create_audio_transcoded_list: $?${clear}"
 }
@@ -218,12 +222,19 @@ function divide_video() {
     # but in the several test I had, this calculation until ~10.0 had a same outcome.
     # we can keep it or ignore it
     local frame_rate=$($ffprobe_binary -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate $input_file)
-    local segment_time_delta=$(awk 'BEGIN{printf "%6f", 1/(2*'$frame_rate')}')
+if [[ ! "$frame_rate" =~ ^[0-9]+([.][0-9]+)?(/[0-9]+([.][0-9]+)?)?$ ]]; then
+    echo "Error: Invalid frame rate: $frame_rate"
+    exit 1
+fi
++     local segment_time_delta=$(echo "scale=6; 1/(2*($frame_rate))" | bc)
     # here we just do some split-copy but I think -copyts is also useful in some cases and it can't hurt
     # so do avoid_negative_ts
     # this is important to note that WE DO NOT COPY/transfer ANY SUBTITLES!!! because I have had problem in some
     # cases. if you want the subtitle, you can extract it easily and attach it again. so with -sn, we ignore/delete
     # the subtitles in transcoding process!
+    # copilot said: The -map v option in the ffmpeg command may cause issues if the input file contains 
+    # multiple video streams. Specify the exact stream index to avoid ambiguity.
+    # and suggested to use -map 0:v:0 instead of -map v
     $ffmpeg_binary -i $input_file -map v -map_chapters -1 -c copy -an -sn \
         -copyts -force_key_frames "expr:gte(t,n_forced*$video_segments_duration)" \
         -f segment -segment_time_delta $segment_time_delta -segment_time $video_segments_duration \
@@ -236,7 +247,7 @@ function divide_video() {
 # here we just create a simple list of files using the .ffconcat file which has a special data format.
 function create_video_filelist() {
     echo -e "${cyanbg}create_video_filelist${clear}"
-    grep -oE '[^ ]+.ts' $input_filename/video_segment_list.ffconcat > $input_filename/video_segment_list.txt
+    grep -oE '[^ ]+.ts' "$input_filename/video_segment_list.ffconcat" > "$input_filename/video_segment_list.txt"
     echo -e "${cyanbg}create_video_filelist: $?${clear}"
 }
 
@@ -247,7 +258,7 @@ function remote_mkdir_filename() {
     echo -e "${cyanbg}remote_mkdir_filename${clear}"
     parallel -j1 --onall \
         -S '..' --sshdelay 0.1 --workdir /mnt/data/ \
-        mkdir -p {}\; rm -f {}/* ::: $input_filename
+        mkdir -p {}\; rm -f {}/* ::: "$input_filename"
     echo -e "${cyanbg}remote_mkdir_filename: $?${clear}"
 }
 
@@ -258,7 +269,7 @@ function remote_rm_filename() {
     echo -e "${cyanbg}remote_rm_filename${clear}"
     parallel -j1 --onall\
         -S '..' --sshdelay 0.1 --workdir /mnt/data/ \
-        rm -rf {}/::: $input_filename
+        rm -rf {}/::: "$input_filename"
     echo -e "${cyanbg}remote_rm_filename: $?${clear}"
 }
 
@@ -293,8 +304,8 @@ function process_video_transcode_hpc_parallel() {
     local lambda_video=""
     for resolution in ${resolutions[@]}; do
         lambda_video+=" -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
-        -vf scale=-2:$resolution $input_filename/transcoded_${resolution}p_{} "
-        lambda_video_return+=" --return $input_filename/transcoded_${resolution}p_{} "
+        -vf scale=-2:$resolution \"$input_filename/transcoded_${resolution}p_{}\" "
+        lambda_video_return+=" --return \"$input_filename/transcoded_${resolution}p_{}\" "
     done
     parallel --bar  -j 2 \
         -S '..,1/:' --delay 0.1 --sshdelay 0.1 --workdir /mnt/data/ \
@@ -329,7 +340,7 @@ function process_video_transcode_localonly_parallel() {
 function create_resolutions_segment_list() {
     echo -e "${cyanbg}create_resolutions_segment_list${clear}"
     for resolution in ${resolutions[@]}; do
-        sed 's/\(file \)\(.*\).ts/\1transcoded_'$resolution'p_\2\.ts/g' \
+        sed "s/\(file \)\(.*\).ts/\1transcoded_${resolution}p_\2\.ts/g" \
         $input_filename/video_segment_list.ffconcat > $input_filename/video_segment_list_${resolution}p.ffconcat
     done
     echo -e "${cyanbg}create_resolutions_segment_list: $?${clear}"
@@ -356,18 +367,18 @@ function join_audios_videos() {
     local lambda_audio=""
     local lambda_audio_map=""
     local counter=1
-    for audio_filename in $(cat $input_filename/audio_list.txt); do
-        lambda_audio+=" -i $input_filename/transcoded_$audio_filename "
+    for audio_filename in $(cat "$input_filename/audio_list.txt"); do
+        lambda_audio+=" -i \"$input_filename/transcoded_$audio_filename\" "
         lambda_audio_map+=" -map $counter:a "
         ((counter++))
     done
     parallel --bar -j 1 -k \
     $ffmpeg_binary -copyts \
-    -i $input_filename/transcoded_video_$input_filename.{1}p$input_extension  \
+    -i "$input_filename/transcoded_video_$input_filename.{1}p$input_extension"  \
     $lambda_audio \
     -c copy -map 0 \
     $lambda_audio_map \
-    $input_filename/$input_filename.{1}p$input_extension \
+    "$input_filename/$input_filename.{1}p$input_extension" \
     ::: ${resolutions[@]}
     echo -e "${cyanbg}join_audios_videos: $?${clear}"
 }
@@ -377,7 +388,7 @@ function join_audios_videos() {
 # assembling sections.
 function segments_cleenup() {
     echo -e "${cyanbg}segments_cleenup${clear}"
-    rm -f $input_filename/*segment_*
+    rm -f "$input_filename"/*segment_*
     echo -e "${cyanbg}segments_cleenup: $?${clear}"
 }
 
@@ -404,15 +415,15 @@ function make_hls() {
     local lambda_audio=""
     local lambda_audio_map=""
     local lambda_audio_copy=""
-    for audio_filename in $(cat $input_filename/audio_list.txt); do
-        lambda_audio+=" -i $input_filename/transcoded_$audio_filename "
+    for audio_filename in $(cat "$input_filename/audio_list.txt"); do
+        lambda_audio+=" -i \"$input_filename/transcoded_$audio_filename\" "
         lambda_audio_map+=" -map $counter:a:0 "
         lambda_audio_copy+=" -c:a:$audio_counter copy -copyts "
         var_stream_map+="a:$audio_counter,agroup:vidaud,name:audio_$audio_counter "
         ((audio_counter++))
         ((counter++))
     done
-    mkdir -p $input_filename/hls
+    mkdir -p "$input_filename/hls"
     $ffmpeg_binary \
         $lambda_video \
         $lambda_audio \
@@ -430,9 +441,9 @@ function make_hls() {
 # here we cleanup the temporarily files in local and only the final transcooded files will remain.
 function final_cleanup() {
     echo -e "${cyanbg}final_cleanup${clear}"
-    rm -f $input_filename/transcoded_*
-    rm -f $input_filename/audio_stream_*
-    rm -f $input_filename/audio_list.txt
+    rm -f "$input_filename"/transcoded_*
+    rm -f "$input_filename"/audio_stream_*
+    rm -f "$input_filename/audio_list.txt"
     echo -e "${cyanbg}final_cleanup: $?${clear}"
 }
 
