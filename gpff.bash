@@ -114,7 +114,7 @@ function extract_audios() {
         local audio_temp_name="audio_stream_$index.m4a"
         # here we are going to use -map 0:index instead of -map a:index
         # that's because we are getting the total index number not index in audio streams
-        lambda_commands+=" -map 0:"$index" -copyts -map_chapters -1 -c copy \"$input_filename/$audio_temp_name\" "
+        lambda_commands+=" -map 0:"$index" -copyts -map_chapters -1 -c copy $input_filename/$audio_temp_name "
         echo "$audio_temp_name" >> "$input_filename/audio_list.txt"
     done
     $ffmpeg_binary -i "$input_file" $lambda_commands
@@ -224,11 +224,7 @@ function divide_video() {
     # but in the several test I had, this calculation until ~10.0 had a same outcome.
     # we can keep it or ignore it
     local frame_rate=$($ffprobe_binary -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate $input_file)
-    if [[ ! "$frame_rate" =~ ^[0-9]+([.][0-9]+)?(/[0-9]+([.][0-9]+)?)?$ ]]; then
-        echo "Error: Invalid frame rate: $frame_rate"
-        exit 1
-    fi
-    local segment_time_delta=$(echo "scale=6; 1/(2*($frame_rate))" | bc)
+    local segment_time_delta=$(awk 'BEGIN{printf "%6f", 1/(2*'$frame_rate')}')
     # here we just do some split-copy but I think -copyts is also useful in some cases and it can't hurt
     # so do avoid_negative_ts
     # this is important to note that WE DO NOT COPY/transfer ANY SUBTITLES!!! because I have had problem in some
@@ -306,8 +302,8 @@ function process_video_transcode_hpc_parallel() {
     local lambda_video=""
     for resolution in ${resolutions[@]}; do
         lambda_video+=" -pix_fmt yuv420p -fps_mode passthrough -vcodec h264 \
-        -vf scale=-2:$resolution \"$input_filename/transcoded_${resolution}p_{}\" "
-        lambda_video_return+=" --return \"$input_filename/transcoded_${resolution}p_{}\" "
+        -vf scale=-2:$resolution $input_filename/transcoded_${resolution}p_{} "
+        lambda_video_return+=" --return $input_filename/transcoded_${resolution}p_{} "
     done
     parallel --bar  -j 2 \
         -S '..,1/:' --delay 0.1 --sshdelay 0.1 --workdir /mnt/data/ \
@@ -370,7 +366,7 @@ function join_audios_videos() {
     local lambda_audio_map=""
     local counter=1
     for audio_filename in $(cat "$input_filename/audio_list.txt"); do
-        lambda_audio+=" -i \"$input_filename/transcoded_$audio_filename\" "
+        lambda_audio+=" -i $input_filename/transcoded_$audio_filename "
         lambda_audio_map+=" -map $counter:a "
         ((counter++))
     done
@@ -418,7 +414,7 @@ function make_hls() {
     local lambda_audio_map=""
     local lambda_audio_copy=""
     for audio_filename in $(cat "$input_filename/audio_list.txt"); do
-        lambda_audio+=" -i \"$input_filename/transcoded_$audio_filename\" "
+        lambda_audio+=" -i $input_filename/transcoded_$audio_filename "
         lambda_audio_map+=" -map $counter:a:0 "
         lambda_audio_copy+=" -c:a:$audio_counter copy -copyts "
         var_stream_map+="a:$audio_counter,agroup:vidaud,name:audio_$audio_counter "
