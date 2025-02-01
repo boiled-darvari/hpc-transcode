@@ -29,6 +29,8 @@
 #
 # - copy the gpff.bash file to the work_dir path
 #
+# - don't forget to install "parallel" if you don't have it already
+#
 # all are ready
 
 # our color for just separate the sections.
@@ -222,11 +224,11 @@ function divide_video() {
     # but in the several test I had, this calculation until ~10.0 had a same outcome.
     # we can keep it or ignore it
     local frame_rate=$($ffprobe_binary -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate $input_file)
-if [[ ! "$frame_rate" =~ ^[0-9]+([.][0-9]+)?(/[0-9]+([.][0-9]+)?)?$ ]]; then
-    echo "Error: Invalid frame rate: $frame_rate"
-    exit 1
-fi
-+     local segment_time_delta=$(echo "scale=6; 1/(2*($frame_rate))" | bc)
+    if [[ ! "$frame_rate" =~ ^[0-9]+([.][0-9]+)?(/[0-9]+([.][0-9]+)?)?$ ]]; then
+        echo "Error: Invalid frame rate: $frame_rate"
+        exit 1
+    fi
+    local segment_time_delta=$(echo "scale=6; 1/(2*($frame_rate))" | bc)
     # here we just do some split-copy but I think -copyts is also useful in some cases and it can't hurt
     # so do avoid_negative_ts
     # this is important to note that WE DO NOT COPY/transfer ANY SUBTITLES!!! because I have had problem in some
