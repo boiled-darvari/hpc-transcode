@@ -6,7 +6,13 @@
 # $ bash gpff.bash "filename.mkv"
 #
 # or just to run locally:
-# bash gpff.bash "filename.mkv" true
+# $ bash gpff.bash "filename.mkv" true
+#
+# or just to run locally with GPU:
+# $ bash gpff.bash "filename.mkv" true true
+#
+# or just to run paralled in all servers with GPU:
+# $ bash gpff.bash "filename.mkv" false true
 #
 # (it's better if you run inside tmux)
 #
@@ -56,12 +62,12 @@ input_extension=".${input_file##*.}"
 input_filename="${input_file%.*}"
 
 # here we choose between static build of ffmpeg and packages.
-ffmpeg_binary="./ffmpeg-git-20240504-amd64-static/ffmpeg"
+ffmpeg_binary="./ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffmpeg"
 # ffmpeg_binary="/mnt/data/ffmpeg-git-20240504-amd64-static/ffmpeg"
 # ffmpeg_binary="ffmpeg"
 
 # here we choose between static build of ffprobe and packages.
-ffprobe_binary="./ffmpeg-git-20240504-amd64-static/ffprobe"
+ffprobe_binary="./ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffprobe"
 # ffprobe_binary="/mnt/data/ffmpeg-git-20240504-amd64-static/ffprobe"
 # ffprobe_binary="ffprobe"
 
@@ -74,8 +80,11 @@ fi
 # to check if we should run local only. we will use it at the end.
 localonly="$2"
 
+# to run with GPU not CPU only
+withgpu="$3"
 
-resolutions=( "360" "480" "720" )
+
+resolutions=( "240" "480" "720" )
 
 # the duration can be anything, but the smaller it goes, the more overhead we will have.
 # also the bigger it goes, there is a chance that we will have the last file our bottleneck.
@@ -224,6 +233,7 @@ function divide_video() {
     # but in the several test I had, this calculation until ~10.0 had a same outcome.
     # we can keep it or ignore it
     local frame_rate=$($ffprobe_binary -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate $input_file)
+    # (we don't use the bc here because of its incompablity)
     local segment_time_delta=$(awk 'BEGIN{printf "%6f", 1/(2*'$frame_rate')}')
     # here we just do some split-copy but I think -copyts is also useful in some cases and it can't hurt
     # so do avoid_negative_ts
@@ -316,9 +326,31 @@ function process_video_transcode_hpc_parallel() {
     echo -e "${cyanbg}process_video_transcode_hpc_parallel: $?${clear}"
 }
 
-# same as above but only on local machine! we only use one of the process_video_transcode_*_parallel() functions.
-# if you want to use localonly, change the function call at the end of this script to this name and
-# also comment out the the remote_*_filename() calls
+# same as above but with GPU!
+# NOTE: we only use one of the process_video_transcode_*_parallel() functions.
+function process_video_transcode_hpc_gpu_parallel() {
+    echo -e "${cyanbg}process_video_transcode_hpc_gpu_parallel${clear}"
+    # for multi-node run
+    local lambda_video_return=""
+    local lambda_video=""
+    for resolution in ${resolutions[@]}; do
+        lambda_video+=" -fps_mode passthrough -vf scale_cuda=w=-1:h=$resolution \
+        -vcodec h264_nvenc $input_filename/transcoded_${resolution}p_{} "
+        lambda_video_return+=" --return $input_filename/transcoded_${resolution}p_{} "
+    done
+    parallel --bar  -j 2 \
+        -S '..,1/:' --delay 0.1 --sshdelay 0.1 --workdir /mnt/data/ \
+        --transferfile $input_filename/{}\
+        $lambda_video_return \
+        --cleanup \
+        $ffmpeg_binary -vsync 0 -hwaccel cuda -hwaccel_output_format cuda \
+        -i $input_filename/{} -copyts $lambda_video \
+        :::: $input_filename/video_segment_list.txt
+    echo -e "${cyanbg}process_video_transcode_hpc_gpu_parallel: $?${clear}"
+}
+
+# same as above but only on local machine with CPU!
+# NOTE: we only use one of the process_video_transcode_*_parallel() functions.
 function process_video_transcode_localonly_parallel() {
     echo -e "${cyanbg}process_video_transcode_localonly_parallel${clear}"
     # for local run,
@@ -332,6 +364,23 @@ function process_video_transcode_localonly_parallel() {
         $lambda_video \
         :::: $input_filename/video_segment_list.txt
     echo -e "${cyanbg}process_video_transcode_localonly_parallel: $?${clear}"
+}
+
+# same as above but only on local machine with GPU!
+# NOTE: we only use one of the process_video_transcode_*_parallel() functions.
+function process_video_transcode_localonly_gpu_parallel() {
+    echo -e "${cyanbg}process_video_transcode_localonly_gpu_parallel${clear}"
+    # for local run,
+    local lambda_video=""
+    for resolution in ${resolutions[@]}; do
+        lambda_video+=" -fps_mode passthrough -vf scale_cuda=w=-1:h=$resolution \
+        -vcodec h264_nvenc $input_filename/transcoded_${resolution}p_{} "
+    done
+    parallel --bar  -j 2 \
+        $ffmpeg_binary -vsync 0 -hwaccel cuda -hwaccel_output_format cuda \
+        -i $input_filename/{} -copyts $lambda_video \
+        :::: $input_filename/video_segment_list.txt
+    echo -e "${cyanbg}process_video_transcode_localonly_gpu_parallel: $?${clear}"
 }
 
 # here we create a .ffconcat file for each resolution using the first .ffconcat file.
@@ -472,15 +521,29 @@ if [[ $localonly != "true" ]]; then
     wait
     time process_audio_transcode_hpc_parallel &
     wait
-    time process_video_transcode_hpc_parallel &
-    wait
+    # if this script is used like : bash gpff.bash "filename.mkv" false true
+    # it will transcode with GPU in all servers
+    if [[ $withgpu != "true" ]]; then
+        time process_video_transcode_hpc_parallel &
+        wait
+    else
+        time process_video_transcode_hpc_gpu_parallel &
+        wait
+    fi
     time remote_rm_filename &
     wait
 else
     time transcode_audio &
     wait
-    time process_video_transcode_localonly_parallel &
-    wait
+    # if this script is used like : bash gpff.bash "filename.mkv" true true
+    # it will transcode with local GPU
+    if [[ $withgpu != "true" ]]; then
+        time process_video_transcode_localonly_parallel &
+        wait
+    else
+        time process_video_transcode_localonly_gpu_parallel &
+        wait
+    fi
 fi
 
 
