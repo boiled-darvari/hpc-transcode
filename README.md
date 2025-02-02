@@ -1,6 +1,8 @@
 # hpc-transcode
 High-Performance Video Transcoding
 
+![image](https://github.com/user-attachments/assets/8c02fbd9-9685-49d6-957c-f32d225fbcd7)
+
 This script enables high-performance video transcoding using multiple nodes and GPU acceleration. It leverages the power of distributed computing and GPU resources to significantly speed up the transcoding process, making it ideal for large-scale video processing tasks.
 
 ## How to Use
