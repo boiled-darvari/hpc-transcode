@@ -1,22 +1,6 @@
 #!/bin/bash
 
-
-### how to use:
-#
-# $ bash gpff.bash "filename.mkv"
-#
-# or just to run locally:
-# $ bash gpff.bash "filename.mkv" true
-#
-# or just to run locally with GPU:
-# $ bash gpff.bash "filename.mkv" true true
-#
-# or just to run paralled in all servers with GPU:
-# $ bash gpff.bash "filename.mkv" false true
-#
-# (it's better if you run inside tmux)
-#
-
+# GNU Parallel + FFMPEG = gpff
 
 ### preparations:
 #
@@ -33,7 +17,7 @@
 # - copy and extract to the work_dir path of all servers
 # - change the ffmpeg_binary and ffprobe_binary value based on that
 #
-# - copy the gpff.bash file to the work_dir path
+# - copy the bash file to the work_dir path
 #
 # - don't forget to install "parallel" if you don't have it already
 #
@@ -45,44 +29,19 @@ clear="\033[0m"
 
 work_dir="/mnt/data/"
 
-# analysing the input and change the spaces in the name to dash
-# so that we will see less bugs in the future
-input_temp_name="$1"
-input_corrected_name=$(echo "$input_temp_name" | sed 's/[][ ]/\-/g')
-if [[ "$input_temp_name" != "$input_corrected_name" ]]; then
-    # if [[ -e "$input_corrected_name" ]]; then
-    #     echo "Error: Target filename '$input_corrected_name' already exists."
-    #     exit 1
-    # fi
-    mv "$input_temp_name" "$input_corrected_name"
-fi
-
-input_file="$input_corrected_name"
-input_extension=".${input_file##*.}"
-input_filename="${input_file%.*}"
-
 # here we choose between static build of ffmpeg and packages.
-ffmpeg_binary="./ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffmpeg"
+# ffmpeg_binary="./ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffmpeg"
 # ffmpeg_binary="/mnt/data/ffmpeg-git-20240504-amd64-static/ffmpeg"
-# ffmpeg_binary="ffmpeg"
+ffmpeg_binary="ffmpeg"
 
 # here we choose between static build of ffprobe and packages.
-ffprobe_binary="./ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffprobe"
+# ffprobe_binary="./ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffprobe"
 # ffprobe_binary="/mnt/data/ffmpeg-git-20240504-amd64-static/ffprobe"
-# ffprobe_binary="ffprobe"
+ffprobe_binary="ffprobe"
 
-# do we want to transcode only mkv and mp4 files?
-if [[ "$input_extension" != ".mkv" ]] && [[ "$input_extension" != ".mp4" ]] ; then
-    echo "Please provide a .mkv or .mp4 file"
-    exit 1
-fi
-
-# to check if we should run local only. we will use it at the end.
-localonly="$2"
-
-# to run with GPU not CPU only
-withgpu="$3"
-
+# Default to distributed CPU mode
+localonly="false"
+withgpu="false"
 
 resolutions=( "240" "480" "720" )
 
@@ -95,6 +54,233 @@ video_segments_duration=60
 # the duration when we doing HLS. note that in some cases the keyframes I saw was interval 10 seconds!
 hls_duration=10
 
+
+input_file=""
+input_extension=""
+input_filename=""
+
+function pars_filename(){
+    # analysing the input and change the spaces in the name to dash
+    # so that we will see less bugs in the future
+    local input_temp_name="$1"
+    local input_corrected_name=$(echo "$input_temp_name" | sed 's/[]_[ ]/\-/g')
+    if [[ "$input_temp_name" != "$input_corrected_name" ]]; then
+        mv "$input_temp_name" "$input_corrected_name"
+    fi
+
+    input_file="$input_corrected_name"
+    input_extension=".${input_file##*.}"
+    input_filename="${input_file%.*}"
+
+    # do we want to transcode only mkv and mp4 files?
+    if [[ "$input_extension" != ".mkv" ]] && [[ "$input_extension" != ".mp4" ]] ; then
+        echo "Please provide a .mkv or .mp4 file"
+        exit 1
+    fi
+}
+
+function pars_resolutions() {
+    local input_list="$1"
+    IFS=',' read -r -a resolutions_array <<< "$input_list"
+    resolutions=("${resolutions_array[@]}")
+    # for resolution in "${resolutions[@]}"; do
+    #     echo "$resolution"
+    # done
+}
+
+function log() {
+    echo "$@" 1>&2
+}
+
+function checking() {
+    log -n "checking $@... "
+}
+
+function fatal() {
+    log "$@"
+    exit 1
+}
+
+function require() {
+    checking "for $1"
+    if ! [ -x "$(command -v $1)" ]; then
+        fatal "not found; please $2"
+    fi
+    log "ok"
+}
+
+function pars_ffmpeg_binary() {
+    ffmpeg_binary="${1}ffmpeg"
+    ffprobe_binary="${1}ffprobe"
+    require "$ffmpeg_binary" "follow setup instructions for ffmpeg, $ffmpeg_binary is not executable"
+    require "$ffprobe_binary" "follow setup instructions for ffmpeg, $ffprobe_binary is not executable"
+}
+
+function usage()
+{
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Options:"
+    echo "  -d | --work-dir <path>          Set the working directory (default: /mnt/data/)"
+    echo "  -i | --input <file>             Set the input file (must be .mkv or .mp4)"
+    echo "  -b | --ffmpeg-bin-dir <path>    Set the directory containing ffmpeg and ffprobe binaries"
+    echo "  -l | --local-only               Run the script locally only"
+    echo "  -g | --with-gpu                 Use GPU for transcoding"
+    echo "  -r | --resolutions <list>       Comma-separated list of resolutions (default: 240,480,720)"
+    echo "  -a | --audio-duration <seconds> Set the duration for audio segments (default: 600)"
+    echo "  -v | --video-duration <seconds> Set the duration for video segments (default: 60)"
+    echo "  -s | --hls-duration <seconds>   Set the duration for HLS segments (default: 10)"
+    echo "  -h | --help                     Display this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 -i filename.mkv"
+    echo "  $0 -i filename.mkv -l"
+    echo "  $0 -i filename.mkv -l -g"
+    echo "  $0 -i filename.mkv -g"
+}
+
+function pars_arguments() {
+    while [[ "$1" != "" ]]; do
+        case $1 in
+            -d | --work-dir)        shift
+                        work_dir="$1"
+                                    ;;
+            -i | --input )          shift
+                        pars_filename "$1"
+                                    ;;
+            -b | --ffmpeg-bin-dir ) shift
+                        pars_ffmpeg_binary "$1"
+                                    ;;
+            -l | --local-only )
+                        localonly="true"
+                                    ;;
+            -g | --with-gpu )       
+                        withgpu="true"
+                                    ;;
+            -r | --resolutions )    shift
+                        pars_resolutions "$1"
+                                    ;;
+            -a | --audio-duration ) shift
+                        audio_segments_duration=$1
+                                    ;;
+            -v | --video-duration ) shift
+                        video_segments_duration=$1
+                                    ;;
+            -s | --hls_duration )   shift
+                        hls_duration=$1
+                                    ;;
+            -h | --help )           usage
+                                    exit
+                                    ;;
+            * )                     usage
+                                    exit 1
+        esac
+        echo $1;
+        shift
+    done
+}
+
+function check_gpu_capability() {
+    if [[ "$withgpu" == "true" ]]; then
+        checking "for CUDA support in FFmpeg"
+        if ! $ffmpeg_binary -hide_banner -filters | grep -q "scale_cuda"; then
+            fatal "FFmpeg binary doesn't support CUDA filters"
+        fi
+        log "ok"
+        
+        checking "for NVIDIA GPU access"
+        if ! command -v nvidia-smi &> /dev/null; then
+            fatal "nvidia-smi not found. Please install NVIDIA drivers"
+        fi
+        if ! nvidia-smi &> /dev/null; then
+            fatal "Cannot access NVIDIA GPU. Check driver installation"
+        fi
+        log "ok"
+
+        # Check GPU on worker nodes if needed
+        if [[ "$withgpu" == "true" && "$localonly" != "true" ]]; then
+            checking "for GPU capability on worker nodes"
+            if ! parallel -S '..' --nonall \
+                "$ffmpeg_binary -hide_banner -filters | grep -q scale_cuda && \
+                command -v nvidia-smi > /dev/null && nvidia-smi > /dev/null" 2>/dev/null; then
+                fatal "One or more worker nodes lack GPU capability"
+            fi
+            log "ok"
+        fi
+    fi
+}
+
+function check_parallel_citation() {
+    if [[ ! -f "$HOME/.parallel/will-cite" ]]; then
+        echo "GNU Parallel citation notice:"
+        echo "When using programs that use GNU Parallel to process data for publication, please cite:"
+        echo ""
+        echo "O. Tange (2011): GNU Parallel - The Command-Line Power Tool,"
+        echo "The USENIX Magazine, February 2011:42-47."
+        echo ""
+        echo "This helps funding further development. Type 'will cite' to confirm:"
+        read -r response
+        if [[ "${response,,}" == "will cite" ]]; then
+            mkdir -p "$HOME/.parallel"
+            touch "$HOME/.parallel/will-cite"
+        else
+            fatal "You need to acknowledge GNU Parallel citation notice"
+        fi
+    fi
+}
+
+function check_node_connectivity() {
+    if [[ "$localonly" != "true" ]]; then
+        checking "for worker nodes configuration"
+        if [[ ! -f "$HOME/.parallel/sshloginfile" ]]; then
+            fatal "Missing ~/.parallel/sshloginfile. Please configure worker nodes"
+        fi
+        log "ok"
+
+        checking "connectivity and work directory on worker nodes"
+        # Try basic connectivity and work_dir check
+        if ! parallel --nonall -S '..' --delay 0.1 --timeout 5 \
+            "hostname && test -d $work_dir" 2>/dev/null; then
+            fatal "Cannot connect to one or more worker nodes or work_dir missing"
+        fi
+        log "ok"
+        
+        checking "ffmpeg on worker nodes"
+        if ! parallel --nonall -S '..' --delay 0.1 \
+            "test -x $(command -v $ffmpeg_binary) && \
+             $ffmpeg_binary -version >/dev/null" 2>/dev/null; then
+            fatal "FFmpeg not found or not executable on one or more worker nodes"
+        fi
+        log "ok"
+    fi
+}
+
+function init() {
+    require "parallel" "run: sudo apt install parallel (or equivalent)"
+    
+    # Handle GNU Parallel citation
+    check_parallel_citation
+    
+    # Parse all command line arguments
+    pars_arguments "$@"
+    
+    # Validate required arguments
+    if [[ -z "$input_file" ]]; then
+        fatal "No input file specified"
+    fi
+    
+    # Validate FFmpeg installation
+    if [[ -n "$ffmpeg_binary" ]]; then
+        require "$ffmpeg_binary" "follow setup instructions for ffmpeg"
+        require "$ffprobe_binary" "follow setup instructions for ffmpeg" 
+    fi
+
+    # Check worker nodes if running distributed
+    check_node_connectivity
+
+    # Check GPU capability if requested
+    check_gpu_capability
+}
 
 # to make sure that the directory is empty so we won't get any intrupts in the process.
 function makedir_or_cleanup() {
@@ -497,8 +683,16 @@ function final_cleanup() {
     echo -e "${cyanbg}final_cleanup: $?${clear}"
 }
 
+
+# Main execution starts here
+
 # here we run the command step by step and wait in each step to be truly completed before going to next done
 # time is for debug only. we usually don't need the &wait at all. but in some cases will be helpful
+
+init "$@"
+
+sleep 1
+
 time makedir_or_cleanup &
 wait
 
@@ -572,171 +766,3 @@ wait
 
 time final_cleanup &
 wait
-
-
-
-
-
-
-# %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% thinking %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-# UPDATE:
-# one of the interesting examples is this blow file (magnet link):
-# ```
-# transmission-cli "magnet:?xt=urn:btih:F6468653281CC3CD9BDA3E78F399752C13CBA61D&dn=Madame.Web.2024.1080p.10bit.WEBRip.6CH.x265.HEVC-PSA&tr=udp%3A%2F%2Fbt1.archive.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=https%3A%2F%2Ftracker1.520.jp%3A443%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce&tr=http%3A%2F%2Fbt.endpot.com%3A80%2Fannounce&tr=udp%3A%2F%2Fuploads.gamecoast.net%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker1.bt.moack.co.kr%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fcoppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.zer0day.to%3A1337%2Fannounce"
-# ```
-#
-# in above file, with 200 seconds, I had several errors but more important one was this one for the
-# last segment:
-# ```
-# [mpegts @ 0x558674a05380] start time for stream 1 is not set in estimate_timings_from_pts
-# [mpegts @ 0x558674a05380] stream 1 : no TS found at start of file, duration not set
-# [mpegts @ 0x558674a05380] Could not find codec parameters for stream 1 (Audio: aac ([15][0][0][0] / 0x000F), 0 channels): unspecified sample format
-# Consider increasing the value for the 'analyzeduration' (0) and 'probesize' (5000000) options
-# ```
-#
-# the main error is this: "Could not find codec parameters for stream 1 (Audio: aac"
-# let's look at it deeper.
-# ```
-# $ probe -i "Madame*.mkv"
-#  Stream #0:0: Video: [SNIP]
-#     Metadata:
-#       BPS             : 1722575
-#       DURATION        : 01:57:49.938000000
-#       [SNIP]
-#   Stream #0:1(eng): Audio: aac (HE-AAC), 48000 Hz, 5.1, fltp (default)
-#     Metadata:
-#       BPS             : 207064
-#       DURATION        : 01:56:11.222000000
-# ```
-#
-# you can see that there is a different between duration of video and audio. so lest see what's happened
-# to the last segment we had:
-# ```
-# $ ffprobe -i "Madame*/segment_0035.ts"
-#   Duration: 00:01:06.27, start: 1.567000, bitrate: 105 kb/s
-#   [SNIP]
-#   Stream #0:0[0x100]: Video: hevc (Main 10) (HEVC / 0x43564548), yuv420p10le(tv, bt709), 1920x800, 23.98 fps, 23.98 tbr, 90k tbn
-#   Stream #0:1[0x101](eng): Audio: aac ([15][0][0][0] / 0x000F), 0 channels
-# ```
-#
-
-
-
-
-
-
-# =================================== trash ==================================================
-
-# -i downloads/053092d3-7845-4428-a40a-4cead148559a -y -threads 2 -map 0:a:0 -acodec aac -strict experimental -async 1 -ar 44100 -ac 2 -ab 128k -f segment -segment_time 10 -segment_list_size 0 -segment_list_flags -cache -segment_format aac -segment_list movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio.m3u8 movies/053092d3-7845-4428-a40a-4cead148559a/audio/0/128k/audio%d.aac -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=854x480 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/480p/index.m3u8 -map 0:v:0 -pix_fmt yuv420p -vsync 1 -async 1 -vcodec h264 -vf scale=1280x720 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 movies/053092d3-7845-4428-a40a-4cead148559a/video/720p/index.m3u8
-
-
-# # like previous function but each resolution has their own audio and playlist.
-# function make_hls() {
-#     echo -e "${cyanbg}make_hls${clear}"
-#     for resolution in ${resolutions[@]}; do
-#         local counter=0
-#         local var_stream_map=""
-#         local video_counter=0
-#         local lambda_video=""
-#         local lambda_video_map=""
-#         local lambda_video_copy=""
-#         lambda_video+=" -i $input_filename/transcoded_video_$input_filename.${resolution}p$input_extension "
-#         lambda_video_map+=" -map $counter:v:0 "
-#         lambda_video_copy+=" -c:v:$video_counter copy -copyts "
-#         var_stream_map+="v:$video_counter,agroup:vid_${resolution}_aud,name:video_$video_counter "
-#         ((video_counter++))
-#         ((counter++))
-#         local audio_counter=0
-#         local lambda_audio=""
-#         local lambda_audio_map=""
-#         local lambda_audio_copy=""
-#         for audio_filename in $(cat $input_filename/audio_list.txt); do
-#             lambda_audio+=" -i $input_filename/transcoded_$audio_filename "
-#             lambda_audio_map+=" -map $counter:a:0 "
-#             lambda_audio_copy+=" -c:a:$audio_counter copy -copyts "
-#             var_stream_map+="a:$audio_counter,agroup:vid_${resolution}_aud,name:audio_$audio_counter "
-#             ((audio_counter++))
-#             ((counter++))
-#         done
-#         mkdir -p "$input_filename/$resolution/"
-#         $ffmpeg_binary \
-#             $lambda_video \
-#             $lambda_audio \
-#             $lambda_video_map \
-#             $lambda_audio_map \
-#             $lambda_video_copy \
-#             $lambda_audio_copy \
-#         -var_stream_map "$var_stream_map" \
-#         -f hls -hls_time 10 -hls_flags independent_segments \
-#         -hls_playlist 1 -hls_playlist_type vod -master_pl_name playlist.m3u8 \
-#         -hls_segment_filename "$input_filename/$resolution/%v/file_%04d.ts" "$input_filename/$resolution/%v/index.m3u8"
-#     done
-#     echo -e "${cyanbg}make_hls: $?${clear}"
-# }
-
-#
-# function make_hls() {
-#     echo -e "${cyanbg}make_hls${clear}"
-#     local counter=0
-#     local var_stream_map=""
-#     local video_counter=0
-#     local lambda_video=""
-#     local lambda_video_map=""
-#     local lambda_video_copy=""
-#     for resolution in ${resolutions[@]}; do
-#         lambda_video+="$input_filename/transcoded_video_$input_filename.$resolution$input_extension"
-#         lambda_video_map+=" -map $counter:v:0 "
-#         lambda_video_copy+=" -c:v:$video_counter copy -copyts "
-#         var_stream_map+="v:$video_counter,agroup:vidaud,name:video_$video_counter "
-#         ((video_counter++))
-#         ((counter++))
-#     done
-#     local audio_counter=0
-#     local lambda_audio=""
-#     local lambda_audio_map=""
-#     local lambda_audio_copy=""
-#     for audio_filename in $(cat $input_filename/audio_list.txt); do
-#         lambda_audio+=" -i $input_filename/transcoded_$audio_filename "
-#         lambda_audio_map+=" -map $counter:a:0 "
-#         lambda_audio_copy+=" -c:a:$audio_counter copy -copyts "
-#         var_stream_map+="a:$audio_counter,agroup:vidaud,name:audio_$audio_counter "
-#         ((audio_counter++))
-#         ((counter++))
-#     done
-#     $ffmpeg_binary \
-#         $lambda_video \
-#         $lambda_audio \
-#         -loop 1 \
-#         -i "concat:video_low.mkv|video_med.mkv|video_high.mkv" \
-#         -map 0:v \
-#         -c:v libx264 -crf 23 -g [keyframe_interval] \
-#         -f segment -segment_list renditions.m3u8 \
-#         -segment_time [segment_duration] -segment_format mpegts \
-#         -map 0:a \
-#         -c:a copy \
-#         -f segment -segment_list_size 1 \
-#         -segment_time [segment_duration] \
-#         -segment_format m4a \
-#         out_%d-%d.ts \
-#         out_%d-%d.m4a
-# }
-#
-# -map 0:a:0 -f segment -segment_time 10 -segment_list_size 0 -segment_list_flags -cache -segment_format aac -segment_list name/audio/0/128k/audio.m3u8 name/audio/0/128k/audio%d.aac
-# +live
-# -map 0:v:0 -f hls -hls_playlist_type vod -hls_time 10 -hls_list_size 0 /video/720p/index.m3u8
-#
-#
-# ffmpeg -i input_video.mp4 \
-#        -i audio1.mp3 -map_metadata:s:a:0 -metadata:s:a:0 language \
-#        -i audio2.mp3 -map_metadata:s:a:1 -metadata:s:a:1 language \
-#        -i input_video_720p.mp4 \
-#        -i input_video_480p.mp4 \
-#        -map 0:v:0 -map 1:a:0 -map 2:a:0 -map 3:v:0 -map 4:v:0 \
-#        -c:v:0 copy -c:v:1 copy -c:v:2 libx264 -vf scale=854:480 \
-#        -c:a copy -var_stream_map "v:0,a:0,agroup:audio,a:1,agroup:audio2,v:2,v:3" \
-#        -master_pl_name master.m3u8 -f hls -hls_time 10 -hls_flags independent_segments \
-#        -hls_playlist_type vod -hls_segment_filename "video_%v_%03d.ts" output.m3u8
-#
-#
-#     ffmpeg -i input_video.mp4 -i audio1.mp3 -i audio2.mp3 -map 0:v:0 -map 1:a:0 -map 2:a:0 -c:v copy -c:a copy -var_stream_map "v:0,a:0,agroup:audio,a:1,agroup:audio2" -master_pl_name master.m3u8 -f hls -hls_time 10 -hls_flags independent_segments -hls_playlist_type vod -hls_segment_filename "video_%v_%03d.ts" output.m3u8

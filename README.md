@@ -1,84 +1,200 @@
 # hpc-transcode
-High-Performance Video Transcoding
 
-![image](https://github.com/user-attachments/assets/8c02fbd9-9685-49d6-957c-f32d225fbcd7)
+High-performance distributed video transcoding with CPU/GPU support
 
-This script enables high-performance video transcoding using multiple nodes and GPU acceleration. It leverages the power of distributed computing and GPU resources to significantly speed up the transcoding process, making it ideal for large-scale video processing tasks.
+## Features
 
-## How to Use
+- Distributed transcoding across multiple nodes using SSH
+- CPU and GPU (NVIDIA CUDA) support 
+- Multi-resolution output (e.g. 240p, 480p, 720p)
+- Audio track preservation
+- HLS output support
+- Segment-based processing
 
-To transcode a video file:
-
-```bash
-bash gpff.bash "filename.mkv"
-```
-
-To run locally:
+## Usage
 
 ```bash
-bash gpff.bash "filename.mkv" true
+Usage: gpff.bash [options]
+
+Options:
+  -d | --work-dir <path>          Set working directory (default: /mnt/data/)
+  -i | --input <file>             Input file (must be .mkv or .mp4)
+  -b | --ffmpeg-bin-dir <path>    Directory containing ffmpeg binaries
+  -l | --local-only               Run locally only
+  -g | --with-gpu                 Use GPU acceleration
+  -r | --resolutions <list>       Comma-separated resolutions (default: 240,480,720)
+  -a | --audio-duration <secs>    Audio segment duration (default: 600)
+  -v | --video-duration <secs>    Video segment duration (default: 60)
+  -s | --hls-duration <secs>      HLS segment duration (default: 10)
+
+Examples:
+  # Basic distributed CPU transcoding
+  gpff.bash -i video.mkv
+
+  # Local CPU transcoding
+  gpff.bash -i video.mkv -l
+
+  # Custom resolutions
+  gpff.bash -i video.mkv -r 480,720,1080
+
+  # GPU acceleration with custom work directory
+  gpff.bash -i video.mkv -g -d /path/to/work
 ```
 
-To run locally with GPU:
+> **Tip:** Always run inside `tmux` for long transcoding jobs inside the servers
+
+## Requirements 
+
+### Master Node
+- FFmpeg with CUDA filters (for GPU mode)
+- GNU Parallel (only needed on master)
+- OpenSSH Client
+- tmux (recommended)
+
+### Worker Nodes
+- FFmpeg with same version and capabilities as master
+- OpenSSH Server
+- NVIDIA drivers & CUDA (if using GPU)
+
+### Important Notes
+- Package manager FFmpeg versions usually lack CUDA support
+- All nodes must be able to access the same work directory path
+- FFmpeg versions should match across all nodes
+- Worker nodes don't need GNU Parallel installed
+
+## Setup Guide
+
+### 1. Master Node Setup
+```bash
+# Install required packages
+sudo apt install ffmpeg parallel tmux openssh-client     # Debian/Ubuntu
+sudo dnf install ffmpeg parallel tmux openssh-clients    # RHEL/Fedora
+```
+
+### 2. Worker Node Setup
+```bash
+# Install only required packages
+sudo apt install ffmpeg openssh-server     # Debian/Ubuntu
+sudo dnf install ffmpeg openssh-server     # RHEL/Fedora
+
+# For GPU support (if needed)
+sudo apt install nvidia-cuda-toolkit      # Debian/Ubuntu
+sudo dnf install cuda-toolkit             # RHEL/Fedora
+```
+
+### 3. Distributed Configuration
+
+#### A. SSH Setup
+1. Generate key on master:
+```bash
+ssh-keygen -t ed25519 -C "transcode-cluster"
+```
+
+2. Copy to workers:
+```bash
+ssh-copy-id user@worker1
+ssh-copy-id user@worker2
+```
+
+#### B. GNU Parallel Setup
+Only on master node:
+```bash
+# Acknowledge citation
+parallel --will-cite
+
+# Create configuration
+echo "user@worker1" >> ~/.parallel/sshloginfile
+echo "user@worker2" >> ~/.parallel/sshloginfile
+
+```
+
+#### C. Storage Setup
+On all nodes:
+```bash
+sudo mkdir -p /mnt/data
+sudo mount /dev/nvme0n1 /mnt/data    # Example for NVMe drive
+```
+
+#### D. FFmpeg Setup
+1. Download FFmpeg (all nodes need compatible versions):
+    - [Official static builds](https://ffmpeg.org/download.html#build-linux) with CUDA
+    - [BtbN's builds](https://github.com/BtbN/FFmpeg-Builds/releases) with CUDA support like `gpl`
+    - [Custom built FFmpeg](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#CUDA) with CUDA support
+
+Note: Package manager versions of FFmpeg typically lack CUDA support.
+
+2. Verify installation on all nodes:
+```bash
+ffmpeg -version
+```
+
+### 4. Testing
 
 ```bash
-bash gpff.bash "filename.mkv" true true
+# Test master node setup
+parallel --will-cite echo ::: "Parallel works!"
+ffmpeg -version
+
+# Check CUDA support
+ffmpeg -hide_banner -filters | grep cuda
+
+# Test worker node connectivity
+parallel --nonall -S '..' hostname
+
+# Test FFmpeg on workers
+parallel --nonall -S '..' ffmpeg -version
+
+# Test GPU if using
+parallel --nonall -S '..' 'nvidia-smi && echo "GPU OK"'
+
+# Test CUDA support in FFmpeg if using GPU
+parallel --nonall -S '..' 'ffmpeg -hide_banner -filters | grep -q "scale_cuda" && echo "CUDA OK"'
 ```
 
-To run in parallel on all servers with GPU:
+## Advanced Configuration
 
+### Performance Tuning
 ```bash
-bash gpff.bash "filename.mkv" false true
+# Audio segment duration (default: 600s)
+gpff.bash -i video.mkv -a 300
+
+# Video segment duration (default: 60s)
+gpff.bash -i video.mkv -v 30
+
+# Custom resolutions
+gpff.bash -i video.mkv -r 360,720,1080
 ```
 
-*It's recommended to run inside `tmux`.*
+### Output Formats
+- Individual resolution MP4/MKV files
+- HLS playlist with all resolutions
+- Preserved audio tracks
+- Original video container format maintained
 
-## Preparations
+## Troubleshooting
 
-1. Generate a new passwordless SSH key on the master server:
-    ```bash
-    ssh-keygen -t ed25519 -C "transcode-cluster"
-    ```
-2. Copy the SSH key to worker/slave servers:
-    ```bash
-    ssh-copy-id -i ~/.ssh/your_key_id user@worker-server
-    ```
-3. On the master server, add the worker server list to the `~/.parallel/sshloginfile` file if running in distributed mode:
-    ```
-    user@worker1,--ssh-key-id ~/.ssh/your_key_id
-    user@worker2,--ssh-key-id ~/.ssh/your_key_id
-    ```
-4. Add an SSD drive/partition with the same path on all servers (e.g., `"/mnt/data/"`).
-5. Update the `work_dir` value in `gpff.bash` based on the previous step.
-6. Download FFmpeg from [here](https://ffmpeg.org/download.html) (download the `non-free` or `gpl` version).
-7. Copy and extract FFmpeg to the `work_dir` path on all servers.
-8. Update the `ffmpeg_binary` and `ffprobe_binary` values in `gpff.bash`.
-9. Copy the `gpff.bash` file to the `work_dir` path.
-10. Install required packages on servers that will process videos:
-     ```bash
-     # For Ubuntu/Debian
-     sudo apt-get install parallel
-     # For CentOS/RHEL
-     sudo yum install parallel
-     ```
-11. Set up CUDA and GPU drivers if using GPU acceleration:
-     ```bash
-     # For Ubuntu/Debian
-     sudo apt-get install nvidia-cuda-toolkit
-     ```
-12. If using GPU, ensure worker nodes can run `nvidia-smi` without password:
-     ```bash
-     # Add to /etc/sudoers
-     username ALL=(ALL) NOPASSWD: /usr/bin/nvidia-smi
-     ```
+### Common Issues
+1. GPU mode fails:
+   - Check FFmpeg has CUDA filters
+   - Verify NVIDIA drivers on all nodes
+   - Ensure matching FFmpeg versions
 
-## Notes
+2. Node connectivity:
+   - Check ~/.parallel/sshloginfile format
+   - Verify SSH keys are properly set up
+   - Test work directory exists and is writable
 
-- All segments will remain in the video's directory in case something goes wrong.
-- Tested with MKV and MP4 files. Other formats may work as well.
-- Tested with [`ffmpeg-n7.1-latest-linux64-gpl-7.1`](https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz)
-- Ensure `parallel` is installed on all servers for distributed processing.
-- The `sudo` command is required only to install packages and set up GPU drivers.
-- The `ssh-key-id` is necessary for passwordless SSH access between master and worker nodes in non-local jobs.
-- Ensure all servers have the same directory structure and necessary permissions.
+3. Audio sync:
+   - Adjust segment durations if needed
+   - Keep original container format
+   - Use -fps_mode passthrough (default)
+
+## Usage Notes
+
+- Tested with:
+  - FFmpeg builds: [`ffmpeg-n7.1-latest-linux64-gpl-7.1`](https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz) and [RPM Fusion](https://koji.rpmfusion.org/koji/buildinfo?buildID=30044)  
+  - Formats: MKV, MP4
+- Temporary segments in master server can be preserved for debugging
+- Requires same paths/permissions across nodes
+- Currently a PoC (proof-of-concept) implementation
 
