@@ -73,7 +73,7 @@ ffprobe_binary="./ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffprobe"
 
 # do we want to transcode only mkv and mp4 files?
 if [[ "$input_extension" != ".mkv" ]] && [[ "$input_extension" != ".mp4" ]] ; then
-    echo "give me .mkv or .mp4"
+    echo "Please provide a .mkv or .mp4 file"
     exit 1
 fi
 
@@ -131,7 +131,7 @@ function extract_audios() {
 }
 
 # here we are going to split the audio files. I prefer not to, but with that, we can
-# use the HPC more efficent and avoid having audio[s] as our work bottleneck
+# use the HPC more efficiently and avoid having audio[s] as our bottleneck
 function divide_audio() {
     echo -e "${cyanbg}divide_audio${clear}"
     parallel --bar  -j 1 \
@@ -216,14 +216,17 @@ function assemble_audio_segments() {
 }
 
 
-# I'm not sure about this flag yet, let's keep it here.
+# The -flags +global_header flag is used to add global headers to each segment.
+# This can be useful in some cases, but it might also increase the processing time.
+# IIRC, it will also make the process a bit long because adding global headers to each segment 
+# increases the processing time. This is especially true for large files or when the number of segments is high.
 # it will add the headers of the main file to each segment files.
 # IIRC, it will also make the process a bit long.
     # -flags +global_header \
 
 # here we will separate the file into smaller section but we will search for keyframes at the end of
 # each duration and split at that point.
-# it seems that transcoding to .ts is more efficent than to .mkv or .mp4 (forgive me for my lack of knowledge)
+# it seems that transcoding to .ts is more efficient than to .mkv or .mp4 (forgive me for my lack of knowledge)
 # we will save the list of segments in a .concat file so that we will use it after transcoding.
 function divide_video() {
     echo -e "${cyanbg}divide_video${clear}"
@@ -297,10 +300,10 @@ function remote_rm_filename() {
 # you can do anything else here in ffmpeg, we don't care, but DON'T FORGET to handle the --return correctly.
 # finally, we gave the input list to the parallel, to choose the files as it likes. it will give each input
 # in the list to each server as much as it can based on -j arguments and server load. but keep it in mind that
-# do not use -j0 (not -j+0) because in some cases, it will slow you down than to be beneficent. also, I presonally
+# do not use -j0 (not -j+0) because in some cases, it will slow you down than to be beneficial. also, I personally
 # prefer to to not use local server (i.e master) for transcoding. because mostly it will drain the RAM and
 # slow us down, because the ffmpeg is using multi-thread itself even we force parallel to use one CPU core. but
-# the qustion here is that why we are using -j+0 to use all cores, if the ffmpeg is doing it itself? the answer
+# the question here is that why we are using -j+0 to use all cores, if the ffmpeg is doing it itself? the answer
 # is that the ffmpeg has it's own bottlenecks and in some cases, I find it beneficial this way. (maybe I'm wrong?)
 # in the new tests, I decided to use -fps_mode passthrough not anything else. so we will have a
 # synchronize output at the end. in my several test, the audio timing were just fine, but the
@@ -406,7 +409,7 @@ function assemble_video_segments() {
 
 # here we join the audios and videos in a new file.
 # same as extract_audios() we create a list of commands on the fly, the name of files as
-# input and then map them with their sequencial index number in the fisrt input file.
+# input and then map them with their sequential index number in the first input file.
 # the -map start with 0 but we have the video as input in that position. so audio starts
 # at 1.
 function join_audios_videos() {
@@ -433,10 +436,10 @@ function join_audios_videos() {
 
 # here we are going to clean the segments to freeup the space. because we used them
 # assembling sections.
-function segments_cleenup() {
-    echo -e "${cyanbg}segments_cleenup${clear}"
+function segments_cleanup() {
+    echo -e "${cyanbg}segments_cleanup${clear}"
     rm -f "$input_filename"/*segment_*
-    echo -e "${cyanbg}segments_cleenup: $?${clear}"
+    echo -e "${cyanbg}segments_cleanup: $?${clear}"
 }
 
 # just a test function for now to see how much time it takes to do all spliting in HLS mode
@@ -494,7 +497,7 @@ function final_cleanup() {
     echo -e "${cyanbg}final_cleanup: $?${clear}"
 }
 
-# here we run the command step by step and wait in each step to be truely completed before going to next done
+# here we run the command step by step and wait in each step to be truly completed before going to next done
 # time is for debug only. we usually don't need the &wait at all. but in some cases will be helpful
 time makedir_or_cleanup &
 wait
@@ -561,7 +564,7 @@ wait
 time join_audios_videos &
 wait
 
-time segments_cleenup &
+time segments_cleanup &
 wait
 
 time make_hls &
