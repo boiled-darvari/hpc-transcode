@@ -37,164 +37,130 @@ Examples:
   # Custom resolutions
   gpff.bash -i video.mkv -r 480,720,1080
 
-  # GPU acceleration with custom work directory
-  gpff.bash -i video.mkv -g -d /path/to/work
+  # GPU acceleration with SSD path and custom FFmpeg build
+  gpff.bash -i "./Akira.1988.mkv" -g -d "/mnt/data/" -b "/mnt/data/ffmpeg-n7.1-latest-linux64-gpl-7.1/bin/ffmpeg/"
 ```
 
 > **Tip:** Always run inside `tmux` for long transcoding jobs inside the servers
 
-## Requirements 
+## Requirements & Setup
 
 ### Master Node
-- FFmpeg with CUDA filters (for GPU mode)
-- GNU Parallel (only needed on master)
-- OpenSSH Client
-- tmux (recommended)
+1. FFmpeg
+   - CPU mode: Any recent build
+   - GPU mode: Must have CUDA support ([see FFmpeg Setup](#ffmpeg-setup))
+2. GNU Parallel ([Installation Guide](https://www.gnu.org/software/parallel/))
+3. OpenSSH Client
+4. tmux (recommended)
 
 ### Worker Nodes
-- FFmpeg with same version and capabilities as master
-- OpenSSH Server
-- NVIDIA drivers & CUDA (if using GPU)
+1. FFmpeg (same version/capabilities as master)
+2. OpenSSH Server
+3. For GPU mode:
+   - NVIDIA GPU
+   - NVIDIA drivers
+   - CUDA Toolkit
+   - FFmpeg with CUDA support
 
-### Important Notes
-- Package manager FFmpeg versions usually lack CUDA support
-- All nodes must be able to access the same work directory path
-- FFmpeg versions should match across all nodes
-- Worker nodes don't need GNU Parallel installed
+### FFmpeg Setup
+Choose one:
+1. [BtbN's FFmpeg Builds](https://github.com/BtbN/FFmpeg-Builds/releases) (GPL with CUDA)
+2. [Custom build with CUDA](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#CUDA)
+3. [Official static builds](https://ffmpeg.org/download.html#build-linux) (verify CUDA support)
 
-## Setup Guide
+> ⚠️ Package manager versions typically lack CUDA support
 
-### 1. Master Node Setup
+### Installation Steps
+1. Install base packages:
 ```bash
-# Install required packages
-sudo apt install ffmpeg parallel tmux openssh-client     # Debian/Ubuntu
-sudo dnf install ffmpeg parallel tmux openssh-clients    # RHEL/Fedora
+# Master node (Debian/Ubuntu)
+sudo apt install parallel tmux openssh-client   # Debian/Ubuntu
+
+# Worker nodes
+sudo apt install openssh-server                 # Debian/Ubuntu
+
+# For GPU in Master and Workers: 
+sudo apt install nvidia-cuda-toolkit            # Debian/Ubuntu
+sudo dnf install cuda-toolkit                   # RHEL/Fedora
 ```
 
-### 2. Worker Node Setup
-```bash
-# Install only required packages
-sudo apt install ffmpeg openssh-server     # Debian/Ubuntu
-sudo dnf install ffmpeg openssh-server     # RHEL/Fedora
-
-# For GPU support (if needed)
-sudo apt install nvidia-cuda-toolkit      # Debian/Ubuntu
-sudo dnf install cuda-toolkit             # RHEL/Fedora
-```
-
-### 3. Distributed Configuration
-
-#### A. SSH Setup
-1. Generate key on master:
+2. Setup SSH:
 ```bash
 ssh-keygen -t ed25519 -C "transcode-cluster"
+ssh-copy-id user@worker123
+ssh-copy-id resu@1.2.3.4
 ```
 
-2. Copy to workers:
+3. Configure GNU Parallel (master only):
 ```bash
-ssh-copy-id user@worker1
-ssh-copy-id user@worker2
-```
-
-#### B. GNU Parallel Setup
-Only on master node:
-```bash
-# Acknowledge citation
-parallel --will-cite
-
-# Create configuration
+parallel --will-cite  # Acknowledge citation
 echo "user@worker1" >> ~/.parallel/sshloginfile
 echo "user@worker2" >> ~/.parallel/sshloginfile
-
+echo "resu@1.2.3.4" >> ~/.parallel/sshloginfile
 ```
 
-#### C. Storage Setup
-On all nodes:
+4. Prepare storage (all nodes):
 ```bash
 sudo mkdir -p /mnt/data
 sudo mount /dev/nvme0n1 /mnt/data    # Example for NVMe drive
 ```
 
-#### D. FFmpeg Setup
-1. Download FFmpeg (all nodes need compatible versions):
-    - [Official static builds](https://ffmpeg.org/download.html#build-linux) with CUDA
-    - [BtbN's builds](https://github.com/BtbN/FFmpeg-Builds/releases) with CUDA support like `gpl`
-    - [Custom built FFmpeg](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#CUDA) with CUDA support
+## Verification
 
-Note: Package manager versions of FFmpeg typically lack CUDA support.
-
-2. Verify installation on all nodes:
+Test your setup:
 ```bash
-ffmpeg -version
-```
-
-### 4. Testing
-
-```bash
-# Test master node setup
-parallel --will-cite echo ::: "Parallel works!"
-ffmpeg -version
-
-# Check CUDA support
-ffmpeg -hide_banner -filters | grep cuda
-
-# Test worker node connectivity
+# Basic connectivity
 parallel --nonall -S '..' hostname
 
-# Test FFmpeg on workers
+# FFmpeg availability & version
 parallel --nonall -S '..' ffmpeg -version
 
-# Test GPU if using
-parallel --nonall -S '..' 'nvidia-smi && echo "GPU OK"'
-
-# Test CUDA support in FFmpeg if using GPU
-parallel --nonall -S '..' 'ffmpeg -hide_banner -filters | grep -q "scale_cuda" && echo "CUDA OK"'
+# GPU support (if using)
+parallel --nonall -S '..' '
+    if command -v nvidia-smi >/dev/null; then
+        echo "=== $(hostname) ==="
+        nvidia-smi
+        ffmpeg -hide_banner -filters | grep cuda
+    fi
+'
 ```
 
-## Advanced Configuration
+## Advanced Usage
 
 ### Performance Tuning
 ```bash
-# Audio segment duration (default: 600s)
-gpff.bash -i video.mkv -a 300
-
-# Video segment duration (default: 60s)
-gpff.bash -i video.mkv -v 30
+# Adjust segment durations
+gpff.bash -i video.mkv -a 300 -v 30
 
 # Custom resolutions
 gpff.bash -i video.mkv -r 360,720,1080
 ```
 
-### Output Formats
-- Individual resolution MP4/MKV files
-- HLS playlist with all resolutions
-- Preserved audio tracks
-- Original video container format maintained
+### Output Types
+- Resolution-specific files (MP4/MKV)
+- HLS playlist with all qualities
+- Original container format preserved
+- All audio tracks included
 
 ## Troubleshooting
 
-### Common Issues
-1. GPU mode fails:
-   - Check FFmpeg has CUDA filters
-   - Verify NVIDIA drivers on all nodes
-   - Ensure matching FFmpeg versions
+1. GPU Issues
+   - Verify CUDA in FFmpeg: `ffmpeg -filters | grep cuda`
+   - Check GPU access: `nvidia-smi`
+   - Confirm matching FFmpeg versions
 
-2. Node connectivity:
-   - Check ~/.parallel/sshloginfile format
-   - Verify SSH keys are properly set up
-   - Test work directory exists and is writable
+2. Node Issues
+   - Test SSH access
+   - Verify work directory exists
+   - Check file permissions
 
-3. Audio sync:
-   - Adjust segment durations if needed
-   - Keep original container format
-   - Use -fps_mode passthrough (default)
+3. Processing Issues
+   - Segment duration adjustments
+   - Audio sync (-fps_mode passthrough)
+   - Work directory space
 
-## Usage Notes
-
-- Tested with:
-  - FFmpeg builds: [`ffmpeg-n7.1-latest-linux64-gpl-7.1`](https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz) and [RPM Fusion](https://koji.rpmfusion.org/koji/buildinfo?buildID=30044)  
-  - Formats: MKV, MP4
-- Temporary segments in master server can be preserved for debugging
-- Requires same paths/permissions across nodes
-- Currently a PoC (proof-of-concept) implementation
+## Notes
+- Tested: FFmpeg n7.1+ (GPL build)
+- Formats: MKV, MP4
+- POC implementation
 
