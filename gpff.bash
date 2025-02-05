@@ -4,18 +4,18 @@
 
 ### preparations:
 #
-# - generate new passwordless ssh-key in master server
+# - generate a new passwordless ssh-key on the master server
 # - copy ssh-key-id to worker/slave servers
 #
-# - in the master server, add worker server list to ~/.parallel/sshloginfile file
-# according to --slf structure in the parallel man page
+# - on the master server, add the worker server list to ~/.parallel/sshloginfile
+# according to the --slf structure in the parallel man page
 #
-# - add ssd drive/partition with the same path in all servers (e.g. "/mnt/data/")
+# - add an SSD drive/partition with the same path on all servers (e.g. "/mnt/data/")
 # - change the work_dir value based on the previous step
 #
 # - download ffmpeg: https://ffmpeg.org/download.html
-# - copy and extract to the work_dir path of all servers
-# - change the ffmpeg_binary and ffprobe_binary value based on that
+# - copy and extract to the work_dir path on all servers
+# - change the ffmpeg_binary and ffprobe_binary values based on that
 #
 # - copy the bash file to the work_dir path
 #
@@ -23,7 +23,7 @@
 #
 # all are ready
 
-# our color for just separate the sections.
+# our color for just separating the sections.
 cyanbg="\033[0;46m"
 clear="\033[0m"
 
@@ -51,7 +51,7 @@ resolutions=( "240" "480" "720" )
 audio_segments_duration=600
 video_segments_duration=60
 
-# the duration when we doing HLS. note that in some cases the keyframes I saw was interval 10 seconds!
+# The duration when we're doing HLS. Note that in some cases the keyframes interval was 10 seconds!
 hls_duration=10
 
 
@@ -59,9 +59,9 @@ input_file=""
 input_extension=""
 input_filename=""
 
-function pars_filename(){
-    # analysing the input and change the spaces in the name to dash
-    # so that we will see less bugs in the future
+function parse_filename(){
+    # analyzing the input and changing the spaces in the name to dashes
+    # to avoid potential bugs
     local input_temp_name="$1"
     local input_corrected_name=$(echo "$input_temp_name" | sed 's/[]_[ ]/\-/g')
     if [[ "$input_temp_name" != "$input_corrected_name" ]]; then
@@ -79,7 +79,7 @@ function pars_filename(){
     fi
 }
 
-function pars_resolutions() {
+function parse_resolutions() {
     local input_list="$1"
     IFS=',' read -r -a resolutions_array <<< "$input_list"
     resolutions=("${resolutions_array[@]}")
@@ -109,7 +109,7 @@ function require() {
     log "ok"
 }
 
-function pars_ffmpeg_binary() {
+function parse_ffmpeg_binary() {
     ffmpeg_binary="${1}ffmpeg"
     ffprobe_binary="${1}ffprobe"
     require "$ffmpeg_binary" "follow setup instructions for ffmpeg, $ffmpeg_binary is not executable"
@@ -139,17 +139,17 @@ function usage()
     echo "  $0 -i filename.mkv -g"
 }
 
-function pars_arguments() {
+function parse_arguments() {
     while [[ "$1" != "" ]]; do
         case $1 in
             -d | --work-dir)        shift
                         work_dir="$1"
                                     ;;
             -i | --input )          shift
-                        pars_filename "$1"
+                        parse_filename "$1"
                                     ;;
             -b | --ffmpeg-bin-dir ) shift
-                        pars_ffmpeg_binary "$1"
+                        parse_ffmpeg_binary "$1"
                                     ;;
             -l | --local-only )
                         localonly="true"
@@ -158,7 +158,7 @@ function pars_arguments() {
                         withgpu="true"
                                     ;;
             -r | --resolutions )    shift
-                        pars_resolutions "$1"
+                        parse_resolutions "$1"
                                     ;;
             -a | --audio-duration ) shift
                         audio_segments_duration=$1
@@ -262,7 +262,7 @@ function init() {
     check_parallel_citation
     
     # Parse all command line arguments
-    pars_arguments "$@"
+    parse_arguments "$@"
     
     # Validate required arguments
     if [[ -z "$input_file" ]]; then
@@ -282,7 +282,7 @@ function init() {
     check_gpu_capability
 }
 
-# to make sure that the directory is empty so we won't get any intrupts in the process.
+# to make sure that the directory is empty so we won't get any interrupts in the process.
 function makedir_or_cleanup() {
     echo -e "${cyanbg}makedir_or_cleanup${clear}"
     mkdir -p "$input_filename"
@@ -291,15 +291,15 @@ function makedir_or_cleanup() {
     echo -e "${cyanbg}makedir_or_cleanup: $?${clear}"
 }
 
-# here we are going to extract each possible audio tracks from the input file
+# here we are going to extract each possible audio track from the input file
 # first of all, we get the exact stream index of audio streams using ffprobe
-# then we create a on the fly list of commands based on the index of track[s]
-# at the same time, we insert the considered names to a text file to have a list of them
+# then we create an on-the-fly list of commands based on the index of track[s]
+# at the same time, we insert the considered names into a text file to have a list of them
 # at the end, we run the generated commands with the main ffmpeg command.
 # with that, we open the input file only once with ffmpeg!
 # the -map_chapters -1 is important to ignore the data stream in some files
 # with chapters
-# the sed 's/,//g' is useles in some cases, but it's good to have it. (in some cases you
+# the sed 's/,//g' is useless in some cases, but it's good to have it. (in some cases you
 # will see at least one colon after the number.)
 function extract_audios() {
     echo -e "${cyanbg}extract_audios${clear}"
@@ -330,7 +330,7 @@ function divide_audio() {
     echo -e "${cyanbg}divide_audio: $?${clear}"
 }
 
-# here we are going to create a simple list of segments based on the the number of audios we
+# here we are going to create a simple list of segments based on the number of audios we
 # have. we will use this file to transcode remotely.
 function create_audio_filelist() {
     echo -e "${cyanbg}create_audio_filelist${clear}"
@@ -343,7 +343,7 @@ function create_audio_filelist() {
 }
 
 # here we are going to transcode the audio tracks in parallel remotely if
-# there are more than one of them. we decide that at the end of this script.
+# there is more than one of them. we decide that at the end of this script.
 # about what the parallel command is doing we talk a lot in process_video_transcode_hpc_parallel()
 # other than that, there is nothing new to explain
 function process_audio_transcode_hpc_parallel() {
@@ -362,7 +362,7 @@ function process_audio_transcode_hpc_parallel() {
     echo -e "${cyanbg}process_audio_transcode_hpc_parallel: $?${clear}"
 }
 
-# here we transcode the audio files locally if the audio tracks are only one
+# here we transcode the audio files locally if there is only one audio track
 # or we are running in localonly mode.
 # (I think, we should stop using -async 1 here.)
 function transcode_audio() {
@@ -377,7 +377,7 @@ function transcode_audio() {
 }
 
 # after transcoding, we need a list of audio files that are transcoded. because the list
-# can be dynamic but in static structure, we guess the transcodded file name based on
+# can be dynamic but in static structure, we guess the transcoded file name based on
 # the audio list we created in extract_audios(). here we just add transcoded_ to each
 # file name in the list.
 function create_audio_transcoded_list() {
@@ -391,7 +391,7 @@ function create_audio_transcoded_list() {
     echo -e "${cyanbg}create_audio_transcoded_list: $?${clear}"
 }
 
-# here we are going to assemble the the transcodded audio segments. for each audio we have
+# here we are going to assemble the transcoded audio segments. for each audio we have
 function assemble_audio_segments() {
     echo -e "${cyanbg}assemble_audio_segments${clear}"
     parallel --bar -j 1 -k \
@@ -406,11 +406,11 @@ function assemble_audio_segments() {
 # This can be useful in some cases, but it might also increase the processing time.
 # IIRC, it will also make the process a bit long because adding global headers to each segment 
 # increases the processing time. This is especially true for large files or when the number of segments is high.
-# it will add the headers of the main file to each segment files.
+# it will add the headers of the main file to each segment file.
 # IIRC, it will also make the process a bit long.
     # -flags +global_header \
 
-# here we will separate the file into smaller section but we will search for keyframes at the end of
+# here we will separate the file into smaller sections but we will search for keyframes at the end of
 # each duration and split at that point.
 # it seems that transcoding to .ts is more efficient than to .mkv or .mp4 (forgive me for my lack of knowledge)
 # we will save the list of segments in a .concat file so that we will use it after transcoding.
@@ -448,7 +448,7 @@ function create_video_filelist() {
     echo -e "${cyanbg}create_video_filelist: $?${clear}"
 }
 
-# here we will create a directory in the nodes/worker servers similar to makedir_or_cleanup()
+# here we will create a directory on the nodes/worker servers similar to makedir_or_cleanup()
 # before starting the main transcode process in process_video_transcode_hpc_parallel()
 # for more details about the commands, see the comments before process_video_transcode_hpc_parallel()
 function remote_mkdir_filename() {
@@ -470,29 +470,29 @@ function remote_rm_filename() {
     echo -e "${cyanbg}remote_rm_filename: $?${clear}"
 }
 
-# we do some magic here using parallel, soon we will go for slurm for a better monitoring, but here it is.
-# you can can see most of it by reading the man page of parallel, but -j+0 means to run parallel as much as
+# we do some magic here using parallel, soon we will go for slurm for better monitoring, but here it is.
+# you can see most of it by reading the man page of parallel, but -j+0 means to run parallel as much as
 # our CPU cores. you can see the number using: parallel --number-of-cores
 # using -S '..,1/:' means that we are using ~/.parallel/sshloginfile as our remote node list (i.e '..', the workers)
 # and using one core (i.e '1/') of our local server (i.e ':', the master/the server we run the `parallel` command)
-# we use 100 miliseonds delay for processing new input and 100 miliseonds for SSH parallel commands so that it
-# will be less agressive in using disk and network alike.
-# with --work-dir we specifying where should files be transfered and processed (see the next paragraph). but
+# we use 100 milliseconds delay for processing new input and 100 milliseconds for SSH parallel commands so that it
+# will be less aggressive in using disk and network alike.
+# with --work-dir we specify where files should be transferred and processed (see the next paragraph). but
 # note that if you specified the local server for processing, the current files also should be in the --work-dir
 # otherwise, the parallel can't find the input file to begin with. (be careful with the drawback)
-# then we say to transfer the input and then return the files started with 'transcode_' and the name of the input.
-# after that, clean the transfered file (i.e the input) and the returned files, also if there was/were a/any
+# then we say to transfer the input and then return the files starting with 'transcode_' and the name of the input.
+# after that, clean the transferred file (i.e the input) and the returned files, also if there was/were a/any
 # --base-file['s'] used.
 # you can do anything else here in ffmpeg, we don't care, but DON'T FORGET to handle the --return correctly.
-# finally, we gave the input list to the parallel, to choose the files as it likes. it will give each input
-# in the list to each server as much as it can based on -j arguments and server load. but keep it in mind that
-# do not use -j0 (not -j+0) because in some cases, it will slow you down than to be beneficial. also, I personally
-# prefer to to not use local server (i.e master) for transcoding. because mostly it will drain the RAM and
-# slow us down, because the ffmpeg is using multi-thread itself even we force parallel to use one CPU core. but
-# the question here is that why we are using -j+0 to use all cores, if the ffmpeg is doing it itself? the answer
-# is that the ffmpeg has it's own bottlenecks and in some cases, I find it beneficial this way. (maybe I'm wrong?)
+# finally, we give the input list to the parallel, to choose the files as it likes. it will give each input
+# in the list to each server as much as it can based on -j arguments and server load. but keep in mind that
+# do not use -j0 (not -j+0) because in some cases, it will slow you down rather than be beneficial. also, I personally
+# prefer not to use the local server (i.e master) for transcoding. because mostly it will drain the RAM and
+# slow us down, because ffmpeg is using multi-thread itself even if we force parallel to use one CPU core. but
+# the question here is why we are using -j+0 to use all cores if ffmpeg is doing it itself? the answer
+# is that ffmpeg has its own bottlenecks and in some cases, I find it beneficial this way. (maybe I'm wrong?)
 # in the new tests, I decided to use -fps_mode passthrough not anything else. so we will have a
-# synchronize output at the end. in my several test, the audio timing were just fine, but the
+# synchronized output at the end. in my several tests, the audio timing was just fine, but the
 # only problem was the video. now that even transcoding mp4 has no problem.
 function process_video_transcode_hpc_parallel() {
     echo -e "${cyanbg}process_video_transcode_hpc_parallel${clear}"
@@ -538,7 +538,7 @@ function process_video_transcode_hpc_gpu_parallel() {
     echo -e "${cyanbg}process_video_transcode_hpc_gpu_parallel: $?${clear}"
 }
 
-# same as above but only on local machine with CPU!
+# same as above but only on the local machine with CPU!
 # NOTE: we only use one of the process_video_transcode_*_parallel() functions.
 function process_video_transcode_localonly_parallel() {
     echo -e "${cyanbg}process_video_transcode_localonly_parallel${clear}"
@@ -555,7 +555,7 @@ function process_video_transcode_localonly_parallel() {
     echo -e "${cyanbg}process_video_transcode_localonly_parallel: $?${clear}"
 }
 
-# same as above but only on local machine with GPU!
+# same as above but only on the local machine with GPU!
 # NOTE: we only use one of the process_video_transcode_*_parallel() functions.
 function process_video_transcode_localonly_gpu_parallel() {
     echo -e "${cyanbg}process_video_transcode_localonly_gpu_parallel${clear}"
@@ -582,7 +582,7 @@ function create_resolutions_segment_list() {
     echo -e "${cyanbg}create_resolutions_segment_list: $?${clear}"
 }
 
-# finally we assemble/concat the segments of each resolution based on the each resolution .ffconcat file.
+# finally we assemble/concat the segments of each resolution based on each resolution .ffconcat file.
 # it happens very fast so that we can even ignore using the parallel command and use a `for` loop.
 function assemble_video_segments() {
     echo -e "${cyanbg}assemble_video_segments${clear}"
@@ -596,7 +596,7 @@ function assemble_video_segments() {
 # here we join the audios and videos in a new file.
 # same as extract_audios() we create a list of commands on the fly, the name of files as
 # input and then map them with their sequential index number in the first input file.
-# the -map start with 0 but we have the video as input in that position. so audio starts
+# the -map starts with 0 but we have the video as input in that position. so audio starts
 # at 1.
 function join_audios_videos() {
     echo -e "${cyanbg}join_audios_videos${clear}"
@@ -620,15 +620,15 @@ function join_audios_videos() {
 }
 
 
-# here we are going to clean the segments to freeup the space. because we used them
-# assembling sections.
+# here we are going to clean the segments to free up the space. because we used them
+# in assembling sections.
 function segments_cleanup() {
     echo -e "${cyanbg}segments_cleanup${clear}"
     rm -f "$input_filename"/*segment_*
     echo -e "${cyanbg}segments_cleanup: $?${clear}"
 }
 
-# just a test function for now to see how much time it takes to do all spliting in HLS mode
+# just a test function for now to see how much time it takes to do all splitting in HLS mode
 # for all video and audio files. the master playlist is useless if you want to use it in VLC
 # it seems that this is exactly what we need? 
 function make_hls() {
@@ -674,7 +674,7 @@ function make_hls() {
     echo -e "${cyanbg}make_hls: $?${clear}"
 }
 
-# here we cleanup the temporarily files in local and only the final transcooded files will remain.
+# here we clean up the temporary files locally and only the final transcoded files will remain.
 function final_cleanup() {
     echo -e "${cyanbg}final_cleanup${clear}"
     rm -f "$input_filename"/transcoded_*
@@ -686,8 +686,8 @@ function final_cleanup() {
 
 # Main execution starts here
 
-# here we run the command step by step and wait in each step to be truly completed before going to next done
-# time is for debug only. we usually don't need the &wait at all. but in some cases will be helpful
+# here we run the command step by step and wait in each step to be truly completed before going to the next one
+# time is for debug only. we usually don't need the &wait at all. but in some cases, it will be helpful
 
 init "$@"
 
@@ -712,14 +712,14 @@ time create_video_filelist &
 wait
 
 # if this script is used like : bash gpff.bash "filename.mkv" true
-# it will only in localonly mode
+# it will only run in localonly mode
 if [[ $localonly != "true" ]]; then
     time remote_mkdir_filename &
     wait
     time process_audio_transcode_hpc_parallel &
     wait
     # if this script is used like : bash gpff.bash "filename.mkv" false true
-    # it will transcode with GPU in all servers
+    # it will transcode with GPU on all servers
     if [[ $withgpu != "true" ]]; then
         time process_video_transcode_hpc_parallel &
         wait
