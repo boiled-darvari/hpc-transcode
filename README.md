@@ -1,4 +1,4 @@
-# hpc-transcode
+# HPC-Transcode
 
 High-performance distributed video transcoding with CPU/GPU support
 
@@ -163,4 +163,5 @@ gpff.bash -i video.mkv -r 360,720,1080
 - Tested: FFmpeg n7.1+ (GPL build)
 - Formats: MKV, MP4
 - POC implementation
+- Subtitles are not handled in this script
 

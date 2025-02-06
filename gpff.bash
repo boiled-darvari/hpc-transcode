@@ -54,6 +54,7 @@ video_segments_duration=60
 # The duration when we're doing HLS. Note that in some cases the keyframes interval was 10 seconds!
 hls_duration=10
 
+segment_time_delta=0
 
 input_file=""
 input_extension=""
@@ -423,7 +424,7 @@ function divide_video() {
     # we can keep it or ignore it
     local frame_rate=$($ffprobe_binary -v 0 -of csv=p=0 -select_streams v:0 -show_entries stream=r_frame_rate $input_file)
     # (we don't use the bc here because of its incompablity)
-    local segment_time_delta=$(awk 'BEGIN{printf "%6f", 1/(2*'$frame_rate')}')
+    segment_time_delta=$(awk 'BEGIN{printf "%6f", 1/(2*'$frame_rate')}')
     # here we just do some split-copy but I think -copyts is also useful in some cases and it can't hurt
     # so do avoid_negative_ts
     # this is important to note that WE DO NOT COPY/transfer ANY SUBTITLES!!! because I have had problem in some
@@ -628,9 +629,11 @@ function segments_cleanup() {
     echo -e "${cyanbg}segments_cleanup: $?${clear}"
 }
 
-# just a test function for now to see how much time it takes to do all splitting in HLS mode
-# for all video and audio files. the master playlist is useless if you want to use it in VLC
-# it seems that this is exactly what we need? 
+# This is a test function to measure the time taken for splitting in HLS mode for all video 
+# and audio files. The master playlist is not useful if you want to use it in VLC.
+# Therefore, I removed the last part of the master playlist to fix it.
+# I haven't added language and correct naming for them yet, as it requires extensive testing
+# with various files, which I haven't had time for.
 function make_hls() {
     echo -e "${cyanbg}make_hls${clear}"
     local counter=0
@@ -668,9 +671,15 @@ function make_hls() {
         $lambda_video_copy \
         $lambda_audio_copy \
        -var_stream_map "$var_stream_map" \
-       -f hls -hls_time 10 -hls_flags independent_segments \
-       -hls_playlist 1 -hls_playlist_type vod -master_pl_name playlist.m3u8 \
-       -hls_segment_filename "$input_filename/hls/%v/file_%04d.ts" "$input_filename/hls/%v/index.m3u8"
+       -force_key_frames "expr:gte(t,n_forced*$hls_duration)" \
+       -segment_time_delta $segment_time_delta \
+       -f hls -hls_time $hls_duration -hls_flags independent_segments \
+       -hls_segment_type mpegts \
+       -hls_playlist true -hls_playlist_type vod -master_pl_name playlist.m3u8 \
+       -hls_segment_filename "$input_filename/hls/%v/file_%04d.ts" \
+       "$input_filename/hls/%v/index.m3u8"
+    # removing audio stream part in the master playlist
+    sed -i '/CODECS="mp4a.40.2"/,+1d' "$input_filename/hls/playlist.m3u8"
     echo -e "${cyanbg}make_hls: $?${clear}"
 }
 
