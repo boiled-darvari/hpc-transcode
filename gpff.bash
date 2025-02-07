@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # GNU Parallel + FFMPEG = gpff
-VERSION="2.1.1"
+VERSION="0.1.0-preview"
 
 ### preparations:
 #

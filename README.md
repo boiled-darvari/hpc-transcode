@@ -162,8 +162,8 @@ gpff.bash -i video.mkv -r 360,720,1080
    - Work directory space
 
 ## Notes
+- This is a proof-of-concept (POC) implementation. Expect potential changes and instability.
 - Tested: FFmpeg n7.1+ (GPL build)
 - Formats: MKV, MP4
-- POC implementation
 - Subtitles are not handled in this script
 
