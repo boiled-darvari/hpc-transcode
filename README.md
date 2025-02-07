@@ -26,6 +26,8 @@ Options:
   -a | --audio-duration <secs>    Audio segment duration (default: 600)
   -v | --video-duration <secs>    Video segment duration (default: 60)
   -s | --hls-duration <secs>      HLS segment duration (default: 10)
+  -V | --version                  Show version information
+  -h | --help                     Show help message
 
 Examples:
   # Basic distributed CPU transcoding

@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # GNU Parallel + FFMPEG = gpff
+VERSION="2.1.1"
 
 ### preparations:
 #
@@ -130,6 +131,7 @@ function usage()
     echo "  -a | --audio-duration <seconds> Set the duration for audio segments (default: 600)"
     echo "  -v | --video-duration <seconds> Set the duration for video segments (default: 60)"
     echo "  -s | --hls-duration <seconds>   Set the duration for HLS segments (default: 10)"
+    echo "  -V | --version                  Display version information"
     echo "  -h | --help                     Display this help message"
     echo ""
     echo "Examples:"
@@ -169,6 +171,9 @@ function parse_arguments() {
             -s | --hls_duration )   shift
                         hls_duration=$1
                                     ;;
+            -V | --version )       echo "gpff version $VERSION"
+                                  exit
+                                  ;;
             -h | --help )           usage
                                     exit
                                     ;;
