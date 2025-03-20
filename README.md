@@ -2,6 +2,9 @@
 
 High-performance distributed video transcoding with CPU/GPU support
 
+[![Codacy Security Scan](https://github.com/boiled-darvari/hpc-transcode/actions/workflows/codacy.yml/badge.svg)](https://github.com/boiled-darvari/hpc-transcode/actions/workflows/codacy.yml)
+
+
 ## Features
 
 - Distributed transcoding across multiple nodes using SSH
